@@ -11,7 +11,7 @@ from entero_process import (EnteroException, validate_table, match_genera,
                             nmf_transform)
 
 # Constants for resource locations etc
-ES_W_MATRIX: str = "data/ES5_w.tsv"
+ES_W_MATRIX: str = "data/ES5_W.tsv"
 
 st.title("Enterosignature Transformer")
 
