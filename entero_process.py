@@ -145,12 +145,8 @@ def _shorten_genus(
     # Genera list should the genera list, but with RE_SHORTEN applied, not 
     # applying each call as computationally inefficient (especially if we want 
     # to run on streamlit's servers)
-    # I'm not entirely sure of the logic behind this function, and I would like 
-    # to recheck it
     # TODO(apduncan): Ensure output of this method matches R implementation
     # Count occurences in the genera list
-    # Clemence's script handles named with and without trailing ? separately
-    # but I think we obtain the same results with an in
     short: str = RE_SHORTEN.sub(r"\1", genus)
     nb_occ: int = sum(map(lambda x: short in x, genera_list))
     nb_occ_s: int = sum(map(lambda x: short in x, short_genera_list))
@@ -297,7 +293,7 @@ def match_genera(
     unmatched: Set[str] = set(abd_tbl.index)
 
     # Create an object to collect all the mappings we identify
-    # No tables will be altered until we've exhausted the ways in which we 
+    # No tables will be altered until we've exhausted the ways in which we
     # could generate mappings
     mapping: GenusMapping = GenusMapping(
         hard_map=hard_mapping,
