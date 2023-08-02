@@ -29,12 +29,13 @@ transformed to Enterosignature weights for each sample.
 mapping file to ensure you are happy with the matches.
 * If taxa observed in your data are very different to those 
 Enterosignatures was built from, results may be unreliable.
-            
-## Offline Use
-
-If you wanted to use this as part of a pipeline, a command line version of
-this same process is available in `entero_process.py` the GitHub repo.
 """)
+
+# Removed text relating to command line as not imlemented
+# ## Offline Use
+
+# If you wanted to use this as part of a pipeline, a command line version of
+# this same process is available in `entero_process.py` the GitHub repo.
             
 abd_file = st.file_uploader(
     label = "Upload GTDB taxonomic relative abundance table",
