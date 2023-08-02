@@ -74,7 +74,7 @@ class GenusMapping():
         """Make an abundance table with renamed and combined rows based on the 
         identified mappings."""
         # Probably we could do some smarter changes and groupbys
-        # TODO(apduncan): Refactor to be less ugly
+        # TODO(apduncan): Refactor, slow and ugly
         for input_taxon, es_maps in self.mapping.items():
             # Where there are conflicting mappings, use the first one
             es_map = es_maps[0]
@@ -228,6 +228,15 @@ def validate_table(abd_tbl: pd.DataFrame,
             lambda x: re.sub(RE_RANK, "", x),
             abd_tbl.index
         )
+    
+    # Delete any taxa which have numeric labels (basically dealing with
+    # MATAFILER output which has a -1 row included). More useful for our
+    # group, limited use for other maybe.
+    numeric_taxa: List[str] = list(filter(
+        lambda x: str(x).lstrip('-').isnumeric(), abd_tbl.index))
+    if len(numeric_taxa) > 0:
+        logger(f"{len(numeric_taxa)} taxa had numeric labels and were dropped.")
+        abd_tbl = abd_tbl.drop(labels=numeric_taxa)
 
     # TODO(apduncan): Pad lineages to standard length with semicolons
 
@@ -249,8 +258,7 @@ def validate_table(abd_tbl: pd.DataFrame,
     if len(zero_samples) > 0:
         abd_tbl = abd_tbl.drop(columns = zero_samples)
         logger(
-            f"Dropped {len(zero_samples)} taxa with no observations: " + \
-            f"{zero_samples}")
+            f"Dropped {len(zero_samples)} sample with no observations")
 
     # Renormalise (TSS)
     abd_tbl = abd_tbl / abd_tbl.sum(axis=0)
@@ -316,7 +324,7 @@ def match_genera(
     unmatched = unmatched.difference(trimmed)
 
     # Homogenise taxa of input matrix and ES
-    # This is adapted directly from Clemence's script, and identifies taxa 
+    # This is adapted directly from Clemence's script, and identifies taxa
     # where the lowest known rank matches, but the preceding elements do not
     es_taxa_short: List[str]    = list(map(
         lambda x: RE_SHORTEN.sub(r"\1", x), es_taxa))
@@ -391,7 +399,7 @@ def match_genera(
     # Match their ordering
     new_abd = new_abd.loc[new_w.index]
 
-    # Summarise loss of abundance and of W weights so user can assess whether 
+    # Summarise loss of abundance and of W weights so user can assess whether
     # this is acceptable
     input_unique = new_w[new_w.sum(axis=1) == 0].index
     input_abd_missed: float = new_abd.loc[input_unique].sum().sum()

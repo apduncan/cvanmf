@@ -24,7 +24,7 @@ transformed to Enterosignature weights for each sample.
 
 ## Caveats
 
-* Only GTDB taxonomy is supported.
+* Only GTDB r207 taxonomy is supported.
 * Automated taxa matching may be inaccurate, you should check the 
 mapping file to ensure you are happy with the matches.
 * If taxa observed in your data are very different to those 
