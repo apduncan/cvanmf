@@ -4,6 +4,7 @@ from typing import (Any, Callable, Collection, Dict, Iterator, List,
                     Optional, Set, Tuple)
 import re
 from sklearn.decomposition import non_negative_factorization
+from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 import pandas as pd
 
@@ -88,7 +89,7 @@ class GenusMapping():
             abd_tbl = abd_tbl.drop(labels=[input_taxon])
         return abd_tbl
 
-    def transform_w(self, 
+    def transform_w(self,
                     w: pd.DataFrame, 
                     abd_tbl: pd.DataFrame) -> pd.DataFrame:
         """Make a W matrix which has rows added for missing taxa."""
@@ -414,6 +415,37 @@ def match_genera(
            "taxa mismatch.")
     return (new_abd, new_w, mapping)
 
+def model_fit(
+        w: pd.DataFrame,
+        h: pd.DataFrame,
+        x: pd.DataFrame,
+        logger: Callable[[str], None] = _console_logger) -> pd.DataFrame:
+    """Model fit (cosine similarity) for each sample to the model WH.
+    
+    Model fit is a measure of how well the input data for a sample can be 
+    fit to the feature weights in the decomposition. Model fit is measured as 
+    cosine similarity between taxon abundances in input matrix X, and taxon 
+    abundances in model product WH.
+    
+    :param pd.DataFrame w: Taxon weight matrix (taxa x ES)
+    :param pd.DataFrame h: Sample ES weight matrix (ES x sample)
+    :param pd.DataFrame x: Input abundances. Here this will be output of 
+                            match_genera"""
+
+    # Obtain product of w x h
+    wh: pd.DataFrame = w.dot(h)
+    # Ensure abundance and model in matching order
+    x = x.loc[wh.index, wh.columns]
+    # Apply across matched columns
+    # We don't want pairwise just specific pairs
+    # TODO(apduncan): Calculate only desired pairs, rather than full matrix
+    cos_sim: pd.DataFrame = pd.DataFrame(
+        np.diag(cosine_similarity(wh.T, x.T)),
+        index = wh.T.index,
+        columns = ["model_fit"]
+    )
+    return cos_sim
+
 def nmf_transform(new_abd: pd.DataFrame,
                   new_w: pd.DataFrame,
                   logger: Callable[[Any], None] = _console_logger
@@ -445,4 +477,21 @@ def nmf_transform(new_abd: pd.DataFrame,
 
 if __name__ == "__main__":
     # Act as a standalone command line tool
+    # Some lazy testing functions here
+    # x = np.array([[0, 1], [2, 2]]) 
+    # td = pd.read_csv("/Users/pez23lof/Downloads/specI.genus", sep = "\t",
+    #                  index_col=0)
+    # print(td.shape)
+    # td = validate_table(td)
+    # es_w = pd.read_csv("data/ES5_W.tsv", sep = "\t", index_col=0)
+    # abd, w, _ = match_genera(es_w, td)
+    # h = nmf_transform(abd, w)
+    # cs = model_fit(w, h.T, abd)
+    # print(cs.mean())
+    # print(w.head())
+    # print(h.head())
+    # abd, w, _ = match_genera(es_w, td, family_rollup=True)
+    # h = nmf_transform(abd, w)
+    # cs = model_fit(w, h.T, abd)
+    # print(cs.mean())
     raise Exception("Command line not implemented")
