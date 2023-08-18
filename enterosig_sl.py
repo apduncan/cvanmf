@@ -14,6 +14,10 @@ import io
 from entero_process import (EnteroException, validate_table, match_genera, 
                             nmf_transform, model_fit)
 
+# Constants for resource locations etc
+ES_W_MATRIX: str = "data/ES5_W.tsv"
+
+@st.cache_data
 def _zip_items(items: Collection[Tuple[str, str]]
                ) -> io.BytesIO:
     # Create an in-memory zip file from a collection of objects, so it can be
@@ -28,17 +32,58 @@ def _zip_items(items: Collection[Tuple[str, str]]
         z.write("data/README.txt", "README.txt")
     return zbuffer
 
-def _transform_match()
-
 # WRAPPER FUNCTIONS
 # Wrap some long running functions, so we can apply the streamlit decorators
-# without having to apply them to the commandline version of those same 
+# without having to apply them to the commandline version of those same
 # functions
+# TODO(apduncan): Improve caching - hashing a lot of big files
+@st.cache_resource
+def _get_es_w(file: str) -> pd.DataFrame:
+    return pd.read_csv(file, index_col=0, sep="\t") 
 
+@st.cache_data
+def _transform_match(abd_tbl: pd.DataFrame
+                     ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    # Sanity check this abundance table
+    abd_tbl = validate_table(abd_tbl, logger=st.write)
 
-# Constants for resource locations etc
-ES_W_MATRIX: str = "data/ES5_W.tsv"
+    # Attempt to match the genera
+    es_w: pd.DataFrame = _get_es_w(ES_W_MATRIX)
+    new_abd, new_w, mapping  = match_genera(
+        es_w,
+        abd_tbl,
+        logger = st.write
+    )
+    return new_abd, new_w, mapping
 
+@st.cache_data
+def _transform_transform(new_abd: pd.DataFrame, 
+                         new_w: pd.DataFrame) -> pd.DataFrame:
+    return nmf_transform(new_abd, new_w, st.write)
+
+@st.cache_data
+def _transform_model_fit(new_w: pd.DataFrame,
+                         es: pd.DataFrame,
+                         new_abd: pd.DataFrame) -> pd.DataFrame:
+    return model_fit(new_w, es.T, new_abd, st.write)
+
+@st.cache_data
+def _plot_heatmap(es: pd.DataFrame) -> go.Figure:
+    es_t: pd.DataFrame = es.T
+    p_hmap: go.Figure = go.Figure(
+        go.Heatmap(
+            z = es_t.values,
+            x = es_t.columns,
+            y = es_t.index
+        )
+    )
+    return p_hmap
+
+@st.cache_data
+def _plot_hist(model_fit: pd.DataFrame) -> go.Figure:
+    return px.histogram(model_fit, x="model_fit")
+
+# APP CONTENT
 st.title("Reapply Enterosignatures")
 
 st.markdown("""This tool attempts to fit genus level taxonomic abundance tables
@@ -55,7 +100,7 @@ each sample.
             to the embedded version of the site. If you attempt to upload a 
             file and get a 500 Response error, try accessing directly 
             rather than using the embedded site 
-            (https://enterosginatures.streamlit.io) or using Firefox_
+            (https://enterosginatures.streamlit.app) or using Firefox_
 
 ## Caveats
 
@@ -95,26 +140,20 @@ if abd_file is not None:
             abd_tbl = validate_table(abd_tbl, logger=st.write)
 
             # Attempt to match the genera
-            es_w: pd.DataFrame = pd.read_csv(ES_W_MATRIX, index_col=0, sep="\t")
-            new_abd, new_w, mapping  = match_genera(
-                es_w,
-                abd_tbl,
-                logger = st.write
-            )
+            new_abd, new_w, mapping  = _transform_match(abd_tbl)
 
         # Data has been transformed
         # TODO(apduncan): Allow custom mapping files to be provided
         # TODO(apduncan): UI for fixing mappings
 
         # Apply NMF with the new data - simple stuff now
-        es: pd.DataFrame = nmf_transform(new_abd, new_w, st.write)
+        es: pd.DataFrame = _transform_transform(new_abd, new_w)
 
         # Model fit in the Enterosignatures paper is the cosine similarity
         # between genus abundance and model
         # So for sample i, between (WH)_i and (N_w)_i
-        mf: pd.DataFrame = model_fit(new_w, es.T, new_abd, st.write)
+        mf: pd.DataFrame = _transform_model_fit(new_w, es, new_abd)
 
-        # TODO(apduncan): Sort out proper Streamlit caching
         # Zip up new W, new abundance, new H (enterosig weights), and model fit
         res_zip: io.BytesIO = _zip_items([
             ("w.tsv", new_w.to_csv(sep="\t")),
@@ -134,21 +173,14 @@ if abd_file is not None:
         st.markdown("### Enterosignature Weights")
 
         # Provide a simple visualisations of the ES
-        es_t: pd.DataFrame = es.T
-        p_hmap: go.Figure = go.Figure(
-            go.Heatmap(
-                z = es_t.values,
-                x = es_t.columns,
-                y = es_t.index
-            )
-        )
+        p_hmap: go.Figure = _plot_heatmap(es)
         st.plotly_chart(
             p_hmap
         )
 
         # Provide a simple visualisation of the model fit
         st.markdown("### Model Fit Distribution")
-        p_hist: go.Figure = px.histogram(mf, x="model_fit")
+        p_hist: go.Figure = _plot_hist(mf)
         st.plotly_chart(
             p_hist
         )
