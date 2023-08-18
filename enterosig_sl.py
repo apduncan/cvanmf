@@ -28,6 +28,14 @@ def _zip_items(items: Collection[Tuple[str, str]]
         z.write("data/README.txt", "README.txt")
     return zbuffer
 
+def _transform_match()
+
+# WRAPPER FUNCTIONS
+# Wrap some long running functions, so we can apply the streamlit decorators
+# without having to apply them to the commandline version of those same 
+# functions
+
+
 # Constants for resource locations etc
 ES_W_MATRIX: str = "data/ES5_W.tsv"
 
@@ -42,6 +50,12 @@ transformed to Enterosignature weights for each sample.
             
 The output is the unnormalised weight for the five Enterosignatures in 
 each sample.
+
+⚠ _Some browsers are currently experiencing an error when uploading a file 
+            to the embedded version of the site. If you attempt to upload a 
+            file and get a 500 Response error, try accessing directly 
+            rather than using the embedded site 
+            (https://enterosginatures.streamlit.io) or using Firefox_
 
 ## Caveats
 
