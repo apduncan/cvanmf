@@ -91,22 +91,32 @@ which use the GTDB taxonomy to the
 [five Enterosignature model](https://doi.org/10.1016/j.chom.2023.05.024). 
 We attempt to match up your genera to those observed in the data used to learn 
 the five Enterosignatures, which allows your abundance table to be 
-transformed to Enterosignature weights for each sample.
+transformed to Enterosignature weights for each sample. 
+[Source at GitHub](https://github.com/apduncan/enterosig_sl).
             
-The output is the unnormalised weight for the five Enterosignatures in 
-each sample.
+### Description of Results
 
+Results are provided as a zip containing several matrices. 
+The main matrix of interest is  `h.tsv` which gives the weight of each of the 
+five enterosignatures (ES_Firm, ES_Bifi...) in each of your samples. 
+After this, `model_fit.tsv` describes, roughly speaking, how well each sample 
+can be described by the 5 Enterosignatures model, with 0 being poor and 1 being 
+good.
+
+The other files included are used in generating `h.tsv` and `model_fit.tsv`, and 
+are included for completeness. A more detailed description of them is given in 
+`README.txt` in the results.
+
+### Caveats
+            
 ⚠ _Some browsers are currently experiencing an error when uploading a file 
             to the embedded version of the site. If you attempt to upload a 
             file and get a 500 Response error, try accessing directly 
             rather than using the embedded site 
             (https://enterosginatures.streamlit.app) or using Firefox_
-
-## Caveats
-
 * Only GTDB r207 taxonomy is supported.
 * Automated taxa matching may be inaccurate, you should check the 
-mapping file to ensure you are happy with the matches.
+mapping file in the results to ensure you are happy with the matches.
 * If taxa observed in your data are very different to those 
 Enterosignatures was built from, results may be unreliable.
 """)
@@ -171,7 +181,6 @@ if abd_file is not None:
         )
 
         st.markdown("### Enterosignature Weights")
-
         # Provide a simple visualisations of the ES
         p_hmap: go.Figure = _plot_heatmap(es)
         st.plotly_chart(
@@ -179,6 +188,7 @@ if abd_file is not None:
         )
 
         # Provide a simple visualisation of the model fit
+        # TODO(apduncan): Bin count customisation, spline, explanation fit
         st.markdown("### Model Fit Distribution")
         p_hist: go.Figure = _plot_hist(mf)
         st.plotly_chart(
