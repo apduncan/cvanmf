@@ -33,7 +33,7 @@ class GenusMapping():
 
     def add(self, genus_from: str, genus_to: str) -> None:
         """Add a mapping. If there is already a mapping from this genus, we 
-        will append this one. Use the conflits() methods to resolve where 
+        will append this one. Use the conflicts() method to resolve where 
         more than one mapping exists"""
         # If user has provided a hard mapping, ignore this mapping
         if genus_from in self.__hard_map:
@@ -55,7 +55,7 @@ class GenusMapping():
         multiple rows will be included. Where mappings are missing, on row with 
         a blank target will be included."""
         
-        # Could be more nicely done with some maps, but take a simple appraoch
+        # Could be more nicely done with some maps, but take a simple approach
         df_src: List[Tuple[str, str]] = []
         for source, targets in self.mapping.items():
             for target in targets:
