@@ -1,8 +1,10 @@
-import argparse
+import os
 import sys
-from typing import (Any, Callable, Collection, Dict, Iterator, List, 
+from typing import (Any, Callable, Collection, Dict, Iterator, List, NamedTuple,
                     Optional, Set, Tuple)
 import re
+
+import click
 from sklearn.decomposition import non_negative_factorization
 from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
@@ -13,6 +15,9 @@ RE_RANK: re.Pattern = re.compile("[a-zA-Z]__")
 RE_SPLIT_GENUS: re.Pattern = re.compile(r"([\w]+)_\w$")
 # Match the last named rank, plus any following ?s
 RE_SHORTEN: re.Pattern = re.compile(r".*;([^\;?]+[;\?]*)$")
+
+# URLS
+URL_5ES: str = "https://raw.githubusercontent.com/apduncan/enterosig_sl/main/data/ES5_W.tsv"
 
 class EnteroException(Exception):
     """Exception raised when unable to proceed with enterosignature 
@@ -116,6 +121,15 @@ class GenusMapping():
     def mapping(self) -> Dict[str, List[str]]:
         return self.__map
 
+class TransformResult(NamedTuple):
+    """Return named results from transformation process"""
+    w: pd.DataFrame
+    h: pd.DataFrame
+    abundance_table: pd.DataFrame
+    model_fit: pd.DataFrame
+    taxon_mapping: GenusMapping
+
+# TODO(apduncan): Better logger for command line
 def _console_logger(message: Any) -> None:
     # Log messages to stderr
     print(message, file=sys.stderr)
@@ -475,23 +489,102 @@ def nmf_transform(new_abd: pd.DataFrame,
     )
     return h_df
 
+def transform_table(abd: pd.DataFrame,
+                    family_rollup: bool,
+                    model_w: pd.DataFrame,
+                    hard_mapping: Dict[str, str],
+                    logger: Callable[[str], None] = _console_logger,
+                    ) -> TransformResult:
+    """Perform all transformation steps, and return all related results"""
+
+    abd_tbl = validate_table(abd, logger=logger)
+    new_abd, new_w, mapping = match_genera(
+        es_w=model_w, abd_tbl=abd_tbl, logger=logger, hard_mapping=hard_mapping,
+        family_rollup=family_rollup
+    )
+    es = nmf_transform(new_abd=new_abd, new_w=new_w, logger=logger)
+    mf = model_fit(w=new_w, h=es.T, x=new_abd)
+    return TransformResult(w=new_w, h=es, abundance_table=new_abd,
+                           model_fit=mf, taxon_mapping=mapping)
+
+@click.command()
+@click.option("-a",
+              "--abundance",
+              required=True,
+              type=click.Path(exists=True, dir_okay=False),
+              help="""Genus level relative abundance table, with genera on rows
+              and samples on columns.""")
+@click.option("-m",
+               "--model_w",
+               required=False,
+               type=click.Path(exists=True, dir_okay=False),
+               help="""Enterosignature W matrix. If not provided, attempts to 
+               find or download the 5 ES model matrix""")
+@click.option("-h",
+               "--hard_mapping",
+               required=False,
+               type=click.Path(exists=True, dir_okay=False),
+               help="""Mapping between taxa in abdundance table and ES W matrix.
+               Provide as a csv, with first column taxa in input table, second 
+               column the name in ES W to map to.""")
+@click.option("--rollup/--no-rollup",
+               default=True,
+               help="""For genera in abundance table which do not match the 
+               ES W matrix, add their abundance to a family level entry if one 
+               exists.""")
+@click.option("-s", "--separator",
+               default="\t", type=str,
+               help="""Separator used in input files.""")
+@click.option("-o", "--output_dir",
+              required=True, type=click.Path(file_okay=False),
+              help="""Directory to write output to.""")
+def transform(abundance: str,
+              model_w: str,
+              hard_mapping: str,
+              rollup: bool,
+              separator: str,
+              output_dir: str) -> None:
+    """Fit new data to an existing Enterosignatures model. The new data must
+    be annotated against the same taxonomy the model uses. Currently this is
+    GTDB r207 for the 5 Enterosignatures model. Source for this tool available
+    at https://github.com/apduncan/enterosig_sl.
+    
+    For more on Enterosignatures see:
+
+    *  Frioux et al. 2023 (doi:10.1016/j.chom.2023.05.024)
+
+    *  https://enterosignatures.quadram.ac.uk
+    """
+    # Load files
+    abundance_df = pd.read_csv(abundance, sep=separator, index_col=0)
+
+    # TODO(apduncan): Properly check hard mapping is working
+    mapping_dict: Dict[str, str]
+    if hard_mapping is not None:
+        mapping_dict = pd.read_csv(hard_mapping, sep=separator).to_dict()
+    else:
+        mapping_dict = {}
+
+    # If no model is provided, attempt to use the 5 ES model
+    w_df: pd.DataFrame = pd.read_csv(
+        URL_5ES if model_w is None else model_w,
+        sep="\t" if model_w is None else separator,
+        index_col=0
+    )
+
+    res: TransformResult = transform_table(
+        abd=abundance_df,
+        family_rollup=rollup,
+        model_w=w_df,
+        hard_mapping=mapping_dict
+    )
+
+    # Output
+    os.makedirs(output_dir, exist_ok=True)
+    res.w.to_csv(os.path.join(output_dir, "w.tsv"))
+    res.h.to_csv(os.path.join(output_dir, "h.tsv"))
+    res.abundance_table.to_csv(os.path.join(output_dir, "abundance.tsv"))
+    res.model_fit.to_csv(os.path.join(output_dir, "taxon_mapping.tsv")) 
+
 if __name__ == "__main__":
-    # Act as a standalone command line tool
-    # Some lazy testing functions here
-    # x = np.array([[0, 1], [2, 2]]) 
-    # td = pd.read_csv("/Users/pez23lof/Downloads/specI.genus", sep = "\t",
-    #                  index_col=0)
-    # print(td.shape)
-    # td = validate_table(td)
-    # es_w = pd.read_csv("data/ES5_W.tsv", sep = "\t", index_col=0)
-    # abd, w, _ = match_genera(es_w, td)
-    # h = nmf_transform(abd, w)
-    # cs = model_fit(w, h.T, abd)
-    # print(cs.mean())
-    # print(w.head())
-    # print(h.head())
-    # abd, w, _ = match_genera(es_w, td, family_rollup=True)
-    # h = nmf_transform(abd, w)
-    # cs = model_fit(w, h.T, abd)
-    # print(cs.mean())
-    raise Exception("Command line not implemented")
+    transform()
