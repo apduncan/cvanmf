@@ -24,11 +24,6 @@ An [example dataset in this format is available here](https://gitlab.inria.fr/cf
 
 CAVEATS = """### Caveats
             
-⚠ _Some browsers are currently experiencing an error when uploading a file 
-            to the embedded version of the site. If you attempt to upload a 
-            file and get a 500 Response error, try accessing directly 
-            rather than using the embedded site 
-            (https://enterosignatures.streamlit.app) or using Firefox_
 * Only GTDB r207 taxonomy is supported.
 * Automated taxa matching may be inaccurate, you should check the 
 mapping file in the results to ensure you are happy with the matches.
