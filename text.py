@@ -52,6 +52,13 @@ UPLOAD_TOOLTIP = """Taxa should be on rows, and samples on columns.
     The first column must be taxa lineages, the first row must be sample IDs.
     We cannot currently convert from other taxonomies to GTDB."""
 
+ROLLUP_LABEL = "Roll up to Family"
+ROLLUP_TOOLTIP = """Sum the abundance of any genera not included in the model 
+into the family level entry if available. For instance, if the genus 
+'Eggerthella' was not in model, but it's family 'Eggerthellaceae' was, the 
+abundance for 'Eggerthella' would be added to the 'Eggerthellaceae' entry.
+"""
+
 LOG_LABEL = "Data Processing Log"
 
 DOWNLOAD_LABEL = "Download Enterosignatures"

@@ -20,6 +20,7 @@ import text
 hide_streamlit_style = """
 <style>
     #root > div:nth-child(1) > div > div > div > div > section > div {padding-top: 0rem;}
+    div[data-testid=column] {valign: middle}
 </style>
 
 """
@@ -89,7 +90,6 @@ es_log: Logger = Logger()
 # Wrap some long running functions, so we can apply the streamlit decorators
 # without having to apply them to the commandline version of those same
 # functions
-# TODO(apduncan): Improve caching - hashing a lot of big files
 @st.cache_resource
 def _get_es_w(file: str) -> pd.DataFrame:
     return pd.read_csv(file, index_col=0, sep="\t") 
@@ -109,10 +109,14 @@ if "uploaded" not in st.session_state:
 
 st.title(text.TITLE)
 
-abd_file = st.file_uploader(
+col_upload, col_opts = st.columns(spec=[0.8, 0.2])
+abd_file = col_upload.file_uploader(
     label = text.UPLOAD_LABEL,
     help = text.UPLOAD_TOOLTIP
 )
+col_opts.markdown('<div style="height: 0.5ex">&nbsp</div>', unsafe_allow_html=True)
+opt_rollup = col_opts.toggle(text.ROLLUP_LABEL, value=True,
+                             help=text.ROLLUP_TOOLTIP)
 uploaded = abd_file is not None
 
 expander_upload = st.expander(text.EXPANDER_UPLOAD, expanded=not uploaded)

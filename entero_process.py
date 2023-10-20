@@ -1,4 +1,7 @@
+#!/usr/bin/env python
+
 import os
+import logging
 import sys
 from typing import (Any, Callable, Collection, Dict, Iterator, List, NamedTuple,
                     Optional, Set, Tuple)
@@ -18,6 +21,13 @@ RE_SHORTEN: re.Pattern = re.compile(r".*;([^\;?]+[;\?]*)$")
 
 # URLS
 URL_5ES: str = "https://raw.githubusercontent.com/apduncan/enterosig_sl/main/data/ES5_W.tsv"
+
+# Instantiate logger
+logging.basicConfig(
+    format='%(levelname)s [%(asctime)s]: %(message)s',
+    datefmt='%d/%m/%Y %I:%M:%S',
+    level=logging.DEBUG
+)
 
 class EnteroException(Exception):
     """Exception raised when unable to proceed with enterosignature 
@@ -129,10 +139,8 @@ class TransformResult(NamedTuple):
     model_fit: pd.DataFrame
     taxon_mapping: GenusMapping
 
-# TODO(apduncan): Better logger for command line
 def _console_logger(message: Any) -> None:
-    # Log messages to stderr
-    print(message, file=sys.stderr)
+    logging.info(message)
 
 def _is_taxon_unknown(taxon: str) -> bool:
     # Remove ?, if all entries in lineage blank, the is unknown
@@ -160,7 +168,6 @@ def _shorten_genus(
     # Genera list should the genera list, but with RE_SHORTEN applied, not 
     # applying each call as computationally inefficient (especially if we want 
     # to run on streamlit's servers)
-    # TODO(apduncan): Ensure output of this method matches R implementation
     # Count occurences in the genera list
     short: str = RE_SHORTEN.sub(r"\1", genus)
     nb_occ: int = sum(map(lambda x: short in x, genera_list))
@@ -187,6 +194,31 @@ def _final_rank(taxon: str) -> str:
 def _final_rank_equal(a: str, b: str) -> bool:
     return _final_rank(a) == _final_rank(b)
 
+def _pad_lineage(
+        taxon: str,
+        delim: str = ";",
+        length: int = 6,
+        unknown: str = "") -> str:
+    """Pad lineage out to the expected length using delimiters. Default is to
+    genus level.
+    :param str taxon: Lineage string for taxon
+    :param str delim: Delimiter between ranks
+    :param int length: Rank to truncate to
+    :param str unknown: Text to fill in unknown ranks
+    """
+
+    lineage_parts: List[str] = taxon.split(delim)
+    diff: int = length - len(lineage_parts)
+    if diff > 0:
+        lineage_parts += [unknown] * diff
+    lineage_parts = lineage_parts[0:length]
+    # Replace any length 0 entries with the unknown indicator
+    lineage_parts = list(map(
+        lambda x: x if len(x) > 0 else unknown,
+        lineage_parts
+    ))
+    return delim.join(lineage_parts)
+
 def validate_table(abd_tbl: pd.DataFrame,
                    logger: Callable[[Any], None] = _console_logger
                    ) -> pd.DataFrame:
@@ -203,7 +235,7 @@ def validate_table(abd_tbl: pd.DataFrame,
     """
     # Check the dimensions make sense
     if abd_tbl.shape[0] < 2 or abd_tbl.shape[1] < 2:
-        logger("""Table has one or fewer columns or rows. Check delimiters and 
+        logger("""Table has one or fewer columns or rows. Check delimiters and
                  newline formats are correct.""")
         raise EnteroException("Table incorrect format.")
 
@@ -226,7 +258,7 @@ def validate_table(abd_tbl: pd.DataFrame,
         abd_tbl = abd_tbl.T
     
     # Remove ? from lineages, unknown should be blank
-    abd_tbl.index = list(map(lambda x: x.replace("?", ""), abd_tbl.index))
+    # abd_tbl.index = list(map(lambda x: x.replace("?", ""), abd_tbl.index))
 
     # See if there are rank indicators in the taxa names
     # We'll take a look at the first 10 taxa, and see if they do
@@ -239,7 +271,7 @@ def validate_table(abd_tbl: pd.DataFrame,
             lambda x: re.sub(RE_RANK, "", x),
             abd_tbl.index
         )
-    
+
     # Delete any taxa which have numeric labels (basically dealing with
     # MATAFILER output which has a -1 row included). More useful for our
     # group, limited use for other maybe.
@@ -249,7 +281,21 @@ def validate_table(abd_tbl: pd.DataFrame,
         logger(f"{len(numeric_taxa)} taxa had numeric labels and were dropped.")
         abd_tbl = abd_tbl.drop(labels=numeric_taxa)
 
-    # TODO(apduncan): Pad lineages to standard length with semicolons
+    # Pad lineages to standard length with semicolons
+    new_index: pd.Index = pd.Index(map(_pad_lineage, abd_tbl.index))
+    # If there are duplicated rows (same genus, or malformed strings) then
+    # report an error
+    duplicates: np.ndarray = new_index.duplicated(keep=False)
+    if any(duplicates):
+        orig_dups: List[str] = abd_tbl.index[duplicates]
+        new_dups: List[str] = new_index[duplicates]
+        logger(f"{len(orig_dups)} taxa are duplicates after trimming to " +
+               "genus length. This may be genuine duplicates, or could be " +
+               "due to erroneous semi-colons. Duplicates are:")
+        for o, n in zip(orig_dups, new_dups):
+            logger(f'{o} -> {n}')
+        raise EnteroException("Duplicate taxa in input after lineage " +
+                              "truncated.")
 
     # Remove any taxa which are completely unknown (all ? or blank)
     bad_taxa: List = list(filter(_is_taxon_unknown, abd_tbl.index))
@@ -538,6 +584,7 @@ def transform_table(abd: pd.DataFrame,
 @click.option("-o", "--output_dir",
               required=True, type=click.Path(file_okay=False),
               help="""Directory to write output to.""")
+
 def transform(abundance: str,
               model_w: str,
               hard_mapping: str,
@@ -587,4 +634,7 @@ def transform(abundance: str,
     res.model_fit.to_csv(os.path.join(output_dir, "taxon_mapping.tsv")) 
 
 if __name__ == "__main__":
-    transform()
+    try:
+        transform()
+    except EnteroException as e:
+        logging.error(f"Unable to transform: {e}")
