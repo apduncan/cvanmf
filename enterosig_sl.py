@@ -115,7 +115,7 @@ abd_file = col_upload.file_uploader(
     help = text.UPLOAD_TOOLTIP
 )
 col_opts.markdown('<div style="height: 0.5ex">&nbsp</div>', unsafe_allow_html=True)
-opt_rollup = col_opts.toggle(text.ROLLUP_LABEL, value=True,
+opt_rollup: bool = col_opts.toggle(text.ROLLUP_LABEL, value=True,
                              help=text.ROLLUP_TOOLTIP)
 uploaded = abd_file is not None
 
@@ -139,7 +139,8 @@ if abd_file is not None:
         # TODO(apduncan): Family rollup as a toggle
         abd_tbl = pd.read_csv(abd_file, sep="\t", index_col=0)
         with expander_log:
-            transformed: TransformResult = _transform_table(abd=abd_tbl)
+            transformed: TransformResult = _transform_table(
+                abd=abd_tbl, family_rollup=opt_rollup)
 
         # Zip up new W, new abundance, new H (enterosig weights), and model fit
         res_zip: io.BytesIO = _zip_items([
