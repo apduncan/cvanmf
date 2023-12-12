@@ -10,5 +10,4 @@ able to take other matrices.
 The streamlit app is available at https://enterosignatures.streamlit.app
 
 There are some features yet to be added:
-* Toggle for family rollup option in Streamlit
 * Option to upload hard mapping file in Streamlit

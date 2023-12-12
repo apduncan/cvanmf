@@ -4,7 +4,7 @@ import os
 import logging
 import sys
 from typing import (Any, Callable, Collection, Dict, Iterator, List, NamedTuple,
-                    Optional, Set, Tuple)
+                    Optional, Set, Tuple, Union)
 import re
 
 import click
@@ -553,6 +553,90 @@ def transform_table(abd: pd.DataFrame,
     return TransformResult(w=new_w, h=es, abundance_table=new_abd,
                            model_fit=mf, taxon_mapping=mapping)
 
+def transform(abundance: Union[str, pd.DataFrame],
+              model_w: Union[str, pd.DataFrame] = "5es",
+              hard_mapping: Optional[Union[str, pd.DataFrame]] = None,
+              rollup: bool = True,
+              separator: str = "\t",
+              output_dir: Optional[str] = None
+              ) -> None:
+    """Transform abundances to an existing Enterosignatures model. 
+
+    :param abundance: Table of genus level abundances to transform. Can be a
+        string giving path, or a DataFrame.
+    :type abundance: Union[str, pd.DataFrame]
+    :param model_w: W matrix of model to use. Can be the name of a known 
+        matrix, a path to load matrix from, or a DataFrame. The default is the 
+        5ES model of Frioux et al. (2023)
+    :type model_w: Union[str, pd.DataFrame]
+    :param hard_mapping: Define matchups between taxon identifeiers in abundance
+        and those in model_w. These will be used in preference of any automated 
+        matches. Should be a table with index being abundance identifier, 
+        and first column the model_w identifier. Can be either a path, or 
+        DataFrame.
+    :type hard_mapping: Optional[Union[str, pd.DataFrame]]
+    :param rollup: For genera in abundance which have no match in model_w,
+        sum their abundance under the family level entry where available.
+    :type rollup: bool
+    :param separator: Separator to use when reading matrices.
+    :type separator: str
+    :param output_dir: Directory to write results to. Directory will be created 
+        if it does not exist. Pass None for no output to disk.
+    :type output_dir: Optional[str]
+    """
+
+    # Load files if required
+    abundance_df: pd.DataFrame
+    if isinstance(abundance, str):
+        abundance_df = pd.read_csv(abundance, sep=separator, index_col=0)
+    else:
+        abundance_df = abundance
+    
+    # Load model
+    w_df: pd.DataFrame
+    if isinstance(model_w, str):
+        # This is either a known model identifier, or a location for model
+        # Check for known models
+        if model_w == "5es":
+            logging.info("Loading 5ES model from GitLab")
+            w_df = pd.read_csv(
+                 URL_5ES, sep="\t", index_col=0
+            )
+        else:
+            logging.info("Loading model from %s", model_w)
+            w_df = pd.read_csv(
+                model_w, sep=separator, index_col=0
+            )
+    else:
+        w_df = model_w
+
+    # Load hard mapping
+    # TODO(apduncan): Properly check hard mapping is working
+    mapping_dict: Dict[str, str]
+    if hard_mapping is not None:
+        if isinstance(hard_mapping, str):
+            mapping_dict = pd.read_csv(hard_mapping, sep=separator).to_dict()
+        else:
+            mapping_dict = hard_mapping.to_dict()
+    else:
+        mapping_dict = {}
+
+    res: TransformResult = transform_table(
+        abd=abundance_df,
+        family_rollup=rollup,
+        model_w=w_df,
+        hard_mapping=mapping_dict
+    )
+
+    if output_dir is not None:
+        os.makedirs(output_dir, exist_ok=True)
+        res.w.to_csv(os.path.join(output_dir, "w.tsv"))
+        res.h.to_csv(os.path.join(output_dir, "h.tsv"))
+        res.abundance_table.to_csv(os.path.join(output_dir, "abundance.tsv"))
+        res.model_fit.to_csv(os.path.join(output_dir, "taxon_mapping.tsv")) 
+    
+    return res
+
 @click.command()
 @click.option("-a",
               "--abundance",
@@ -584,8 +668,7 @@ def transform_table(abd: pd.DataFrame,
 @click.option("-o", "--output_dir",
               required=True, type=click.Path(file_okay=False),
               help="""Directory to write output to.""")
-
-def transform(abundance: str,
+def cli(abundance: str,
               model_w: str,
               hard_mapping: str,
               rollup: bool,
@@ -631,10 +714,10 @@ def transform(abundance: str,
     res.w.to_csv(os.path.join(output_dir, "w.tsv"))
     res.h.to_csv(os.path.join(output_dir, "h.tsv"))
     res.abundance_table.to_csv(os.path.join(output_dir, "abundance.tsv"))
-    res.model_fit.to_csv(os.path.join(output_dir, "taxon_mapping.tsv")) 
+    res.model_fit.to_csv(os.path.join(output_dir, "taxon_mapping.tsv"))
 
 if __name__ == "__main__":
     try:
-        transform()
+        cli()
     except EnteroException as e:
         logging.error(f"Unable to transform: {e}")
