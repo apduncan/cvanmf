@@ -12,7 +12,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 import streamlit as st
 
-from entero_process import (EnteroException, TransformResult, transform_table)
+from src.enterosig.transform import (EnteroException, TransformResult, transform_table)
 import text
 
 # Remove the big top margin to gain more space
@@ -114,9 +114,10 @@ abd_file = col_upload.file_uploader(
     label = text.UPLOAD_LABEL,
     help = text.UPLOAD_TOOLTIP
 )
-col_opts.markdown('<div style="height: 0.5ex">&nbsp</div>', unsafe_allow_html=True)
+col_opts.markdown('<div style="height: 0.5ex">&nbsp</div>',
+                  unsafe_allow_html=True)
 opt_rollup: bool = col_opts.toggle(text.ROLLUP_LABEL, value=True,
-                             help=text.ROLLUP_TOOLTIP)
+                                   help=text.ROLLUP_TOOLTIP)
 uploaded = abd_file is not None
 
 expander_upload = st.expander(text.EXPANDER_UPLOAD, expanded=not uploaded)

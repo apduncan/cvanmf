@@ -1,0 +1,5 @@
+docs/_build
+dist
+.pytest_cache
+.idea
+.coverage

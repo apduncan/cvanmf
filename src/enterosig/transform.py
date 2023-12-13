@@ -1,26 +1,24 @@
 #!/usr/bin/env python
 
-import os
 import logging
-import sys
+import os
+import re
 from typing import (Any, Callable, Collection, Dict, Iterator, List, NamedTuple,
                     Optional, Set, Tuple, Union)
-import re
 
 import click
-from sklearn.decomposition import non_negative_factorization
-from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 import pandas as pd
+from sklearn.decomposition import non_negative_factorization
+from sklearn.metrics.pairwise import cosine_similarity
+
+from enterosig import models
 
 # Compile regular expressions
 RE_RANK: re.Pattern = re.compile("[a-zA-Z]__")
 RE_SPLIT_GENUS: re.Pattern = re.compile(r"([\w]+)_\w$")
 # Match the last named rank, plus any following ?s
 RE_SHORTEN: re.Pattern = re.compile(r".*;([^\;?]+[;\?]*)$")
-
-# URLS
-URL_5ES: str = "https://raw.githubusercontent.com/apduncan/enterosig_sl/main/data/ES5_W.tsv"
 
 # Instantiate logger
 logging.basicConfig(
@@ -554,20 +552,20 @@ def transform_table(abd: pd.DataFrame,
                            model_fit=mf, taxon_mapping=mapping)
 
 def transform(abundance: Union[str, pd.DataFrame],
-              model_w: Union[str, pd.DataFrame] = "5es",
+              model_w: Union[str, pd.DataFrame] = models.five_es(),
               hard_mapping: Optional[Union[str, pd.DataFrame]] = None,
               rollup: bool = True,
               separator: str = "\t",
               output_dir: Optional[str] = None
-              ) -> None:
+              ) -> TransformResult:
     """Transform abundances to an existing Enterosignatures model. 
 
     :param abundance: Table of genus level abundances to transform. Can be a
         string giving path, or a DataFrame.
     :type abundance: Union[str, pd.DataFrame]
-    :param model_w: W matrix of model to use. Can be the name of a known 
-        matrix, a path to load matrix from, or a DataFrame. The default is the 
-        5ES model of Frioux et al. (2023)
+    :param model_w: W matrix of model to use. Can be a DataFrame, or the path to load matrix from. The default is the
+        5ES model of Frioux et al. (2023, https://doi.org/10.1016/j.chom.2023.05.024). Other models, once available,
+        can be loaded via the models module.
     :type model_w: Union[str, pd.DataFrame]
     :param hard_mapping: Define matchups between taxon identifeiers in abundance
         and those in model_w. These will be used in preference of any automated 
@@ -599,9 +597,7 @@ def transform(abundance: Union[str, pd.DataFrame],
         # Check for known models
         if model_w == "5es":
             logging.info("Loading 5ES model from GitLab")
-            w_df = pd.read_csv(
-                 URL_5ES, sep="\t", index_col=0
-            )
+            w_df = models.five_es()
         else:
             logging.info("Loading model from %s", model_w)
             w_df = pd.read_csv(
@@ -696,10 +692,8 @@ def cli(abundance: str,
         mapping_dict = {}
 
     # If no model is provided, attempt to use the 5 ES model
-    w_df: pd.DataFrame = pd.read_csv(
-        URL_5ES if model_w is None else model_w,
-        sep="\t" if model_w is None else separator,
-        index_col=0
+    w_df: pd.DataFrame = models.five_es() if model_w is None else pd.read_csv(
+        model_w, index_col=0, sep=separator
     )
 
     res: TransformResult = transform_table(
