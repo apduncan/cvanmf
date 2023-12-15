@@ -37,7 +37,7 @@ class GenusMapping():
     def __init__(self, 
                  target_taxa: Set[str],
                  source_taxa: Set[str],
-                 hard_map: Optional[Dict[str, str]] = {}):
+                 hard_map: Optional[Dict[str, str]] = None):
         # hard_map are user provided mappings which will never be altered
         self.__target_taxa = target_taxa
         self.__source_taxa = source_taxa
@@ -64,8 +64,8 @@ class GenusMapping():
             self.__map[genus_from].append(genus_to)
 
     def to_df(self) -> pd.DataFrame:
-        """Write the mapping used to TSV format. Where mappings are amibiguous, 
-        multiple rows will be included. Where mappings are missing, on row with 
+        """Produce a dataframe of the mapping. Where mappings are amibiguous,
+        multiple rows will be included. Where mappings are missing, one row with
         a blank target will be included."""
         
         # Could be more nicely done with some maps, but take a simple approach
@@ -89,18 +89,19 @@ class GenusMapping():
         identified mappings."""
         # Probably we could do some smarter changes and groupbys
         # TODO(apduncan): Refactor, slow and ugly
+        abd: pd.DataFrame = abd_tbl.copy()
         for input_taxon, es_maps in self.mapping.items():
             # Where there are conflicting mappings, use the first one
             es_map = es_maps[0]
             if input_taxon == es_map:
                 continue
             # Add or sum
-            if es_map not in abd_tbl.index:
-                abd_tbl.loc[es_map] = abd_tbl.loc[input_taxon]
+            if es_map not in abd.index:
+                abd.loc[es_map] = abd.loc[input_taxon]
             else:
-                abd_tbl.loc[es_map] += abd_tbl.loc[input_taxon]
-            abd_tbl = abd_tbl.drop(labels=[input_taxon])
-        return abd_tbl
+                abd.loc[es_map] += abd.loc[input_taxon]
+            abd = abd.drop(labels=[input_taxon])
+        return abd
 
     def transform_w(self,
                     w: pd.DataFrame, 
@@ -199,6 +200,7 @@ def _pad_lineage(
         unknown: str = "") -> str:
     """Pad lineage out to the expected length using delimiters. Default is to
     genus level.
+
     :param str taxon: Lineage string for taxon
     :param str delim: Delimiter between ranks
     :param int length: Rank to truncate to
@@ -330,7 +332,7 @@ def match_genera(
     """Match taxonomic names in the input table and the Enterosignatures W 
     matrix.
     
-    This function is currently based on the R script provided by Clemence in 
+    This function is currently based on the R script provided by Clemence in
     the Enterosignatures (ES) gitlab repo (prepare_matrices.R)
     https://gitlab.inria.fr/cfrioux/enterosignature-paper/. 
     This will attempt to match names, but if any input names cannot be matched 
@@ -563,9 +565,10 @@ def transform(abundance: Union[str, pd.DataFrame],
     :param abundance: Table of genus level abundances to transform. Can be a
         string giving path, or a DataFrame.
     :type abundance: Union[str, pd.DataFrame]
-    :param model_w: W matrix of model to use. Can be a DataFrame, or the path to load matrix from. The default is the
-        5ES model of Frioux et al. (2023, https://doi.org/10.1016/j.chom.2023.05.024). Other models, once available,
-        can be loaded via the models module.
+    :param model_w: W matrix of model to use. Can be a DataFrame, or the path to
+        load matrix from. The default is the 5ES model of Frioux et al.
+        (2023, https://doi.org/10.1016/j.chom.2023.05.024). Other models,
+        once available, can be loaded via the models module.
     :type model_w: Union[str, pd.DataFrame]
     :param hard_mapping: Define matchups between taxon identifeiers in abundance
         and those in model_w. These will be used in preference of any automated 
