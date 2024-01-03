@@ -97,7 +97,7 @@ def _get_es_w(file: str) -> pd.DataFrame:
 @st.cache_data
 def _transform_table(abd: pd.DataFrame,
                      family_rollup: bool = True) -> TransformResult:
-    return transform_table(abd=abd, family_rollup=family_rollup, 
+    return transform_table(abundance=abd, rollup=family_rollup,
                            model_w=_get_es_w(ES_W_MATRIX),
                            hard_mapping={}, logger=es_log.log)
 

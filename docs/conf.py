@@ -26,6 +26,19 @@ extensions = [
     "sphinx.ext.viewcode",
 ]
 autoapi_dirs = ["../src/enterosig"]
+autoapi_options = ['members', 'undoc-members', 'show-inheritance',
+                   'show-module-summary', 'imported-members']
+autoapi_member_order = 'groupwise'
+autoapi_python_class_content = 'both'
+
+def skip_utils(app, what, name, obj, skip, options):
+    if "RE_" in name or "EnteroException" in name:
+       skip = True
+    return skip
+
+def setup(sphinx):
+   sphinx.connect("autoapi-skip-member", skip_utils)
+
 
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
