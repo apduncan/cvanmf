@@ -12,7 +12,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 import streamlit as st
 
-from src.enterosig.transform import (EnteroException, TransformResult, transform_table)
+from src.enterosig.reapply import (EnteroException, ReapplyResult, transform_table)
 import text
 
 # Remove the big top margin to gain more space
@@ -96,7 +96,7 @@ def _get_es_w(file: str) -> pd.DataFrame:
 
 @st.cache_data
 def _transform_table(abd: pd.DataFrame,
-                     family_rollup: bool = True) -> TransformResult:
+                     family_rollup: bool = True) -> ReapplyResult:
     return transform_table(abundance=abd, rollup=family_rollup,
                            model_w=_get_es_w(ES_W_MATRIX),
                            hard_mapping={}, logger=es_log.log)
@@ -140,7 +140,7 @@ if abd_file is not None:
         # TODO(apduncan): Family rollup as a toggle
         abd_tbl = pd.read_csv(abd_file, sep="\t", index_col=0)
         with expander_log:
-            transformed: TransformResult = _transform_table(
+            transformed: ReapplyResult = _transform_table(
                 abd=abd_tbl, family_rollup=opt_rollup)
 
         # Zip up new W, new abundance, new H (enterosig weights), and model fit

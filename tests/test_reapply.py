@@ -7,10 +7,10 @@ import pandas as pd
 import pytest
 from click.testing import CliRunner
 
-from enterosig.transform import cli
+from enterosig.reapply import cli, to_relative
 from enterosig import models
-from enterosig.transform import (GenusMapping, EnteroException, validate_table,
-                                 match_genera, nmf_transform, transform_table, TransformResult, model_fit)
+from enterosig.reapply import (GenusMapping, EnteroException, validate_table,
+                               match_genera, nmf_transform, transform_table, ReapplyResult, model_fit)
 
 
 def test_genus_mapping() -> None:
@@ -44,7 +44,7 @@ def test_genus_mapping() -> None:
     # Get mapping as a DataFrame
     df: pd.DataFrame = mapping.to_df()
     assert df.shape == (5, 2), "DataFrame of mapping has wrong dimensions"
-    assert set(df['input_genus']) == source_taxa, ("Some source taxa missing in" 
+    assert set(df['input_genus']) == source_taxa, ("Some source taxa missing in"
                                                    "dataframe of mapping")
     assert set(df['es_genus']) == {"", "B", "C"}, "Unexpected target taxa"
 
@@ -78,6 +78,7 @@ def test_genus_mapping() -> None:
     # been added and sums to 0
     assert "N" in trans_w.index, "Missing taxon N not added to transformed W"
     assert trans_w.loc["N"].sum() == 0, "Missing taxon does not have 0 weight"
+
 
 def test_validate_table() -> None:
     """Test abunance table validations"""
@@ -136,6 +137,7 @@ def test_validate_table() -> None:
     with pytest.raises(EnteroException):
         validate_table(transposed, logger=lambda x: log.append(x))
 
+
 def test_match_genera() -> None:
     """Test function for matching genera in an abundance table and model. This
     is the bulk of work in reapplying Eneterosignatures."""
@@ -156,7 +158,7 @@ def test_match_genera() -> None:
     assert t_abd.shape[1] == abd.shape[1], \
         "Abundance column counts do not match"
     # Only columns which exist in the original W matrix should have any weight
-    has_weight: Iterable[str] = t_w[t_w.sum(axis=1) >0].index
+    has_weight: Iterable[str] = t_w[t_w.sum(axis=1) > 0].index
     assert all(x in w.index for x in has_weight), \
         "Taxa not in original model have been assigned weight"
     # Check hard mapping respected
@@ -173,14 +175,15 @@ def test_match_genera() -> None:
     t_w, t_abd, map = match_genera(es_w=w, abd_tbl=abd, hard_mapping=mapping,
                                    family_rollup=False, logger=log.append)
 
+
 def test_model_fit() -> None:
     """Test functions for calculating model fit."""
 
-    # Check simplest case - two identical matices should produce all 1s
+    # Check simplest case - two identical matrices should produce all 1s
     w: pd.DataFrame = models.five_es()
     abd: pd.DataFrame = models.example_abundance()
-    res: TransformResult = transform_table(abundance=abd, rollup=True,
-                                           model_w=w)
+    res: ReapplyResult = transform_table(abundance=abd, rollup=True,
+                                         model_w=w)
     mf: pd.DataFrame = model_fit(res.w, res.h.T, res.w.dot(res.h.T))
     # Sometimes, 1.0 != 1.0, thanks computers
     assert all(np.isclose(mf['model_fit'], 1.0)), \
@@ -190,6 +193,7 @@ def test_model_fit() -> None:
     mf = model_fit(res.w, res.h.T, res.abundance_table)
     assert round(mf['model_fit'].mean(), 3) == round(0.636286, 3), \
         "Change in mean model fit"
+
 
 def test_cli(tmp_path) -> None:
     """Test the click command line interface for reapplying."""
@@ -206,3 +210,20 @@ def test_cli(tmp_path) -> None:
     # Check output files are created
     for f in ['w.tsv', 'h.tsv', 'abundance.tsv', 'taxon_mapping.tsv']:
         assert (tmp_path / f).exists(), f"Output {f} not created"
+
+
+def test_to_relative():
+    """Test that ES weight can be coverted to relative abundance."""
+
+    # Check simplest case - two identical matrices should produce all 1s
+    res: ReapplyResult = transform_table(abundance=models.example_abundance(),
+                                         rollup=True,
+                                         model_w=models.five_es()
+                                         )
+    rel_res: ReapplyResult = to_relative(res)
+    res_sum: pd.DataFrame = rel_res.h.sum(axis=1)
+    # Check matrix is in the right orientation
+    assert rel_res.h.shape == rel_res.h.shape, \
+        "Relative abundance shape not the same as input matrix"
+    assert all(np.isclose(res_sum, 1.0)), \
+        "Relative abundances do not sum to 1"

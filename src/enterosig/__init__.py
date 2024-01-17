@@ -6,4 +6,4 @@ etc etc
 from importlib.metadata import version
 __version__ = version("enterosig")
 
-from enterosig.transform import transform
+from enterosig.reapply import reapply

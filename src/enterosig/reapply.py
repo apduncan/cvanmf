@@ -2,8 +2,8 @@
 """
 Reapply existing Enterosignature models to new abundance data.
 
-The easiest way to do this is through the :func:`transform` function, which is
-most fleixble about parameter types. The other functions perform individual
+The easiest way to do this is through the :func:`reapply` function, which is
+most flexible about parameter types. The other functions perform individual
 steps, which are useful if you want fine control of a given step, but
 probably not necessary for most uses.
 """
@@ -197,7 +197,7 @@ class GenusMapping():
         """Mapping from source to target taxa."""
         return {**self.__map, **{x: [y] for x, y in self.__hard_map.items()}}
 
-class TransformResult(NamedTuple):
+class ReapplyResult(NamedTuple):
     """A named tuple containing results from transformation process."""
     w: pd.DataFrame
     """Model weights with index matched to input abundances."""
@@ -638,12 +638,37 @@ def nmf_transform(new_abd: pd.DataFrame,
     )
     return h_df
 
+
+def to_relative(result: ReapplyResult) -> ReapplyResult:
+    """Covert results to relative abundance
+
+    The output model weights for each sample do not sum to a constant values.
+    For many analyses, you may want to consider the relative weight of each
+    ES in each sample, by scaling so each sample sums to 1 (total sum scaling).
+    This converts the h property to a relative value for each sample.
+    Note when this is applied :math:`W \\times H \\not\\approx X` except in
+    the unlikely case all samples summed close to 1 anyway.
+
+    :param result: Result object
+    :type result: ReapplyResult
+    :returns: New result object with h converted to relative values.
+    :rtype: ReapplyResult
+    """
+    h_rel: pd.DataFrame = (result.h.T / result.h.T.sum()).T
+    return ReapplyResult(
+        w=result.w, abundance_table=result.abundance_table,
+        model_fit=result.model_fit, taxon_mapping=result.taxon_mapping,
+        h=h_rel
+    )
+
+
 def transform_table(abundance: pd.DataFrame,
                     model_w: pd.DataFrame,
                     hard_mapping: Optional[Dict[str, str]] = None,
                     rollup: bool = True,
-                    logger: Callable[[str], None] = _console_logger,
-                    ) -> TransformResult:
+                    relative_abundance: bool = False,
+                    logger: Callable[[str], None] = _console_logger
+                    ) -> ReapplyResult:
     """Transform abundance DataFrame using model W DataFrame.
 
     The new data must be annotated against the same taxonomy the model uses.
@@ -664,30 +689,38 @@ def transform_table(abundance: pd.DataFrame,
     :type hard_mapping: Optional[Dict[str, str]]
     :param rollup: For genera in abundance which have no match in model_w,
         sum their abundance under the family level entry where available.
+    :param relative_abundance: Whether to convert weights to relative abundance
+        (all samples sum to 1)
+    :type relative_abundance: bool
     :type rollup: bool
     """
 
-    abd_tbl = validate_table(abundance, logger=logger)
+    abd_tbl: pd.DataFrame = validate_table(abundance, logger=logger)
     new_abd, new_w, mapping = match_genera(
         es_w=model_w, abd_tbl=abd_tbl, logger=logger, hard_mapping=hard_mapping,
         family_rollup=rollup
     )
-    es = nmf_transform(new_abd=new_abd, new_w=new_w, logger=logger)
-    mf = model_fit(w=new_w, h=es.T, x=new_abd)
-    return TransformResult(w=new_w, h=es, abundance_table=new_abd,
-                           model_fit=mf, taxon_mapping=mapping)
+    es: pd.DataFrame = nmf_transform(new_abd=new_abd, new_w=new_w,
+                                     logger=logger)
+    mf: pd.DataFrame = model_fit(w=new_w, h=es.T, x=new_abd)
+    res: ReapplyResult = ReapplyResult(
+        w=new_w, h=es, abundance_table=new_abd, model_fit=mf,
+        taxon_mapping=mapping)
+    res = to_relative(res) if relative_abundance else res
+    return res
 
-def transform(abundance: Union[str, pd.DataFrame],
-              model_w: Union[str, pd.DataFrame] = models.five_es(),
-              hard_mapping: Optional[Union[str, pd.DataFrame]] = None,
-              rollup: bool = True,
-              separator: str = "\t",
-              output_dir: Optional[str] = None
-              ) -> TransformResult:
-    """Load and transform abundances to an existing Enterosignatures model.
+def reapply(abundance: Union[str, pd.DataFrame],
+            model_w: Union[str, pd.DataFrame] = models.five_es(),
+            hard_mapping: Optional[Union[str, pd.DataFrame]] = None,
+            rollup: bool = True,
+            separator: str = "\t",
+            output_dir: Optional[str] = None,
+            relative_abundance: bool = False
+            ) -> ReapplyResult:
+    """Load and transform abundances to an existing Enterosignature model.
 
     The new data must be annotated against the same taxonomy the model uses.
-    Currently this is GTDB r207 for the 5 Enterosignatures model. Taxon names
+    Currently this is GTDB r207 for the 5 Enterosignature model. Taxon names
     will be automatically matched between the abundance table and model where
     possible, (see :func:`match_genera`). Most of the work is done in
     :func:`transform_table`, this mostly provides convenience of allowing
@@ -701,7 +734,7 @@ def transform(abundance: Union[str, pd.DataFrame],
         (2023, https://doi.org/10.1016/j.chom.2023.05.024). Other models,
         once available, can be loaded via the models module.
     :type model_w: Union[str, pd.DataFrame]
-    :param hard_mapping: Define matchups between taxon identifeiers in abundance
+    :param hard_mapping: Define matchups between taxon identifiers in abundance
         and those in model_w. These will be used in preference of any automated 
         matches. Should be a table with index being abundance identifier, 
         and first column the model_w identifier. Can be either a path, or 
@@ -715,8 +748,12 @@ def transform(abundance: Union[str, pd.DataFrame],
     :param output_dir: Directory to write results to. Directory will be created 
         if it does not exist. Pass None for no output to disk.
     :type output_dir: Optional[str]
-    :returns: Mutiple results, see :class:`TransformResult`
-    :rtype: TransformResult
+    :param relative_abundance: Whether to convert weights to relative abundance
+        (all samples sum to 1). Note that if using relative abundance,
+        product of w and h no longer approximates input.
+    :type relative_abundance: bool
+    :returns: Mutiple results, see :class:`ReapplyResult`
+    :rtype: ReapplyResult
     """
 
     # Load files if required
@@ -743,7 +780,6 @@ def transform(abundance: Union[str, pd.DataFrame],
         w_df = model_w
 
     # Load hard mapping
-    # TODO(apduncan): Properly check hard mapping is working
     mapping_dict: Dict[str, str]
     if hard_mapping is not None:
         if isinstance(hard_mapping, str):
@@ -753,11 +789,12 @@ def transform(abundance: Union[str, pd.DataFrame],
     else:
         mapping_dict = {}
 
-    res: TransformResult = transform_table(
+    res: ReapplyResult = transform_table(
         abundance=abundance_df,
         rollup=rollup,
         model_w=w_df,
-        hard_mapping=mapping_dict
+        hard_mapping=mapping_dict,
+        relative_abundance=relative_abundance
     )
 
     if output_dir is not None:
@@ -821,7 +858,7 @@ def cli(abundance: str,
         model_w = '5es'
 
     # Use transform function
-    res: TransformResult = transform(
+    res: ReapplyResult = reapply(
         abundance=abundance,
         model_w=model_w,
         hard_mapping=hard_mapping,

@@ -34,7 +34,7 @@ remove_dist = false                         # don't remove dists
 patch_without_tag = true                    # patch release by default
 
 [tool.poetry.scripts]
-es_fit = "enterosig.transform:cli"
+es_fit = "enterosig.reapply:cli"
 #es_ui = "enterosig.streamlist"
 
 [build-system]
