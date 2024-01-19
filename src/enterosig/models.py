@@ -23,6 +23,19 @@ def five_es() -> pd.DataFrame:
         index_col=0
     )
 
+def five_es_x() -> pd.DataFrame:
+    """The genus level relative abundance data used to train five ES model in
+    Frioux et al. (2023, https://doi.org/10.1016/j.chom.2023.05.024).
+
+    :return: Genus level relative abundance table using GTDB r207 taxonomy
+    :rtype: pd.DataFrame
+    """
+    return pd.read_csv(
+        str(files("enterosig.data").joinpath("ES5_X.tsv")),
+        sep="\t",
+        index_col=0
+    )
+
 def example_abundance() -> pd.DataFrame:
     """The genus level relative abundance data for Non-Western cohort from
     Frioux et al. (2023, https://doi.org/10.1016/j.chom.2023.05.024).
