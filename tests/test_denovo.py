@@ -3,12 +3,15 @@ import itertools
 import pathlib
 from typing import List
 
+import matplotlib.pyplot
 import numpy as np
 import pandas as pd
+import plotnine
 import pytest
 
 from enterosig import models
-from enterosig.denovo import BicvSplit, BicvFold, bicv, _cosine_similarity, rank_selection
+from enterosig.denovo import BicvSplit, BicvFold, bicv, _cosine_similarity, rank_selection, BicvResult, \
+    plot_rank_selection
 
 
 def test_bicv_split():
@@ -150,4 +153,48 @@ def test__cosine_similarity():
 
 def test_rank_selection():
     df: pd.DataFrame = models.example_abundance()
-    rank_selection(df, list(range(2, 6)), 5)
+    rank_selection(df, list(range(2, 6)), 3)
+
+
+def test_to_series():
+    df: pd.DataFrame = models.example_abundance()
+    shuffles: List[BicvSplit] = BicvSplit.from_matrix(
+        df=df, n=1, random_state=4298)
+
+    res = bicv(mx=shuffles[0], rank=5, seed=99)
+    series: pd.Series = res.to_series()
+    # TODO: Better tests, just ensuring it doesn't crash currently
+
+
+def test_results_to_table():
+    df: pd.DataFrame = models.example_abundance().iloc[:50, :20]
+    shuffles: List[BicvSplit] = BicvSplit.from_matrix(
+        df=df, n=3, random_state=4298)
+
+    # Join from a dict across ranks / alpha values
+    res = rank_selection(df, ranks=list(range(2, 5)),
+                         shuffles=3, max_iter=5)
+    res_df: pd.DataFrame = BicvResult.results_to_table(res)
+    # TODO: Better tests, just ensuring doesn't crash currently.
+    # TODO: Better fixture, shouldn't be rerunning decompositions so much.
+    foo = 'bar'
+
+
+def test_plot_rank_selection(tmp_path: pathlib.Path):
+    matplotlib.pyplot.switch_backend("Agg")
+    df: pd.DataFrame = models.example_abundance()  # .iloc[:50, :20]
+    shuffles: List[BicvSplit] = BicvSplit.from_matrix(
+        df=df, n=3, random_state=4298)
+
+    # Join from a dict across ranks / alpha values
+    res = rank_selection(df, ranks=list(range(2, 8)),
+                         shuffles=20, max_iter=2000)
+    res_df: pd.DataFrame = BicvResult.results_to_table(res)
+    # TODO: Better tests, just ensuring doesn't crash currently.
+    # TODO: Better fixture, shouldn't be rerunning decompositions so much.
+    plt = plot_rank_selection(res, exclude=None, geom="box")
+    pth = (tmp_path / "test_rank_sel.png")
+    plt.save(pth)
+    import subprocess
+    subprocess.run(["open", str(pth)])
+    foo = "bar"

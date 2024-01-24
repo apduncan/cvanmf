@@ -14,32 +14,41 @@ multiple nodes in an HPC environment.
 """
 from __future__ import annotations
 
+import collections
 import glob
+import inspect
 import itertools
 import logging
 import pathlib
 import re
-from typing import Optional, NamedTuple, List, Iterable, Union, Tuple, Set, Any, Dict
+from typing import (Optional, NamedTuple, List, Iterable, Union, Tuple, Set,
+                    Any, Dict, Callable)
 
 import numpy as np
 import pandas as pd
+import plotnine
 from sklearn.decomposition import NMF, non_negative_factorization
 from sklearn.decomposition._nmf import _beta_divergence
+from tqdm import tqdm
 
-# TODO: Refactor this to a class so the load / save methods can be attached
+# Type aliases
 # BicvSplit = List[pd.DataFrame]
-"""Alias for a 3x3 split of a matrix."""
+Numeric = Union[int, float]
+"""Alias for a python numeric types"""
 
 
 class BicvFold(NamedTuple):
     """One fold from a shuffled matrix
 
     The 9 submatrices have been joined into the structure shown below
-    ```
-    A B B
-    C D D
-    C D D
-    From which A will be estimated as A' using only B, C, D.
+
+    .. code-block:: text
+
+        A B B
+        C D D
+        C D D
+
+    from which A will be estimated as A' using only B, C, D.
     ```
     """
     A: pd.DataFrame
@@ -51,7 +60,7 @@ class BicvFold(NamedTuple):
 class BicvSplit:
     """Shuffled matrix for bi-cross validation, split into 9 matrices in a 3x3
     pattern. To shuffle and split an existing matrix, use the static method
-    :method:`from_matrix`"""
+    :method:`BicvSplit.from_matrix`"""
 
     FOLD_PERMUTATIONS = [
         [0, 1, 2],
@@ -65,9 +74,12 @@ class BicvSplit:
     def __init__(self, mx: List[pd.DataFrame], i: Optional[int] = None) -> None:
         """Create a shuffled matrix containing the 9 split matrices. These
         should be in the order
-        [0, 1, 2,
-         3, 4, 5,
-         6, 7, 8]
+
+        .. code-block:: text
+
+            0, 1, 2
+            3, 4, 5
+            6, 7, 8
 
         :param mx: Split matrices
         :type mx: List[pd.DataFrame]
@@ -201,7 +213,7 @@ class BicvSplit:
         :param i: Index of the fold to construct, from 0 to 8
         :returns: A, B, C, and D matrices for this fold
         """
-        if i > len(self.FOLD_PERMUTATIONS)**2:
+        if i > len(self.FOLD_PERMUTATIONS) ** 2:
             raise IndexError(f"Fold index out of range.")
         row, col = divmod(i, len(self.FOLD_PERMUTATIONS))
         row_idx, col_idx = (self.FOLD_PERMUTATIONS[row],
@@ -216,7 +228,7 @@ class BicvSplit:
         c: pd.DataFrame = pd.concat([mx_i[1][0], mx_i[2][0]], axis=0)
         d: pd.DataFrame = pd.concat(
             [pd.concat([mx_i[1][1], mx_i[1][2]], axis=1),
-            pd.concat([mx_i[2][1], mx_i[2][2]], axis=1)],
+             pd.concat([mx_i[2][1], mx_i[2][2]], axis=1)],
             axis=0
         )
         return BicvFold(a, b, c, d)
@@ -505,6 +517,61 @@ class BicvResult(NamedTuple):
                results[0].parameters.keep_mats else None)
         )
 
+    def to_series(self,
+                  summarise: Callable[[np.ndarray], float] = np.mean
+                  ) -> pd.Series:
+        """Convert bi-fold cross validation results to series
+
+        :param summarise: Function to reduce each the measure (r_squared etc)
+            to a single value for each shuffle.
+        :returns: Series with entry for each non-parameter measure
+        """
+        exclude: Set[str] = {"a", "parameters"}
+        res_dict: Dict[str, float] = {
+            name: summarise(vals) for name, vals in self._asdict().items() if
+            name not in exclude
+        }
+        # Append the parameters which aren't complex data types
+        # Just include the strings and numbers
+        params: Dict[str, Any] = {
+            name: val for name, val in self.parameters._asdict().items() if
+            any(isinstance(val, t) for t in [str, int, float])
+        }
+        # Also include the shuffle number from shuffle params, might be of
+        # interest to users
+        params['shuffle_num'] = self.parameters.mx.i
+        # Join these two and turn into a series
+        series: pd.Series = pd.Series(
+            {**res_dict, **params}
+        )
+        return series
+
+    @staticmethod
+    def results_to_table(
+            results: Union[
+                Iterable[BicvResult], Dict[Numeric, Iterable[BicvResult]]
+            ],
+            summarise: Callable[[np.ndarray], float] = np.mean
+    ) -> pd.DataFrame:
+        """Convert bi-fold crossvalidation results to a table
+
+        For results run with the same parameters, convert the output to a
+        table suitable for plotting.
+
+        :param results: List of results for bicv runs with the same
+            parameters on different shuffles of the data, or dict of runs
+            across multiple values on the same shuffles.
+        :param summarise: Function to reduce each the measure (r_squared etc)
+            to a single value for each shuffle.
+        """
+        result: Iterable[BicvResult] = (
+            results if not isinstance(results, dict) else
+            itertools.chain.from_iterable(results.values())
+        )
+        df: pd.DataFrame = pd.DataFrame(
+            [x.to_series(summarise=summarise) for x in result])
+        return df
+
 
 def rank_selection(x: pd.DataFrame,
                    ranks: Iterable[int],
@@ -515,20 +582,49 @@ def rank_selection(x: pd.DataFrame,
                    l1_ratio: Optional[float] = None,
                    max_iter: Optional[int] = None,
                    beta_loss: Optional[str] = None,
-                   init: Optional[str] = None):
-    """
+                   init: Optional[str] = None,
+                   progress_bar: bool = True) -> Dict[int, List[BicvResult]]:
+    """Bi-cross validation for rank selection.
 
-    :param x:
-    :param ranks:
-    :param shuffles:
-    :param keep_mats:
-    :param seed:
-    :param alpha:
-    :param l1_ratio:
-    :param max_iter:
-    :param beta_loss:
-    :param init:
-    :returns:
+    Run 9-fold bi-cross validation across a range of ranks. Briefly, the
+    input matrix is shuffled `shuffles` times. Each shuffle is then split
+    into 9 submatrices. The rows and columns of submatrices are permuted,
+    and the top left submatrix (A) is estimated through NMF decompositions of
+    the other matrices produced an estimate A'. Various measures of how well
+    A' reconstructed A are provided, see :class:`BicvResult` for details
+    on the measures.
+
+    No multiprocessing is used, as a majority of build of scikit-learn
+    make good use of multiple processors anyway. Decompositions are run
+    from highest rank to lowest. This is to give a worst case, rather than
+    over optimistic estimate, of remaining time when using the progress
+    bar.
+
+    This method returns a dictionary with each rank as a key, and a list
+    containing one :class:`BicvResult` for each shuffle.
+
+    Values other than 9 for folds are possible, currently this package only
+    supports 9.
+
+    :param x: Input matrix.
+    :param ranks: Ranks of k to be searched. Iterable of unique ints.
+    :param shuffles: Number of times to shuffle `x`.
+    :param keep_mats: Return A' and shuffle as part of results.
+    :param seed: Random value generator or seed for creation of the same.
+        If not provided, will initialise with entropy from system.
+    :param alpha: Regularisation coefficient
+    :param l1_ratio: Ratio between L1 and L2 regularisation. L2 regularisation
+        (1.0) is densifying, L1 (0.0) sparisfying.
+    :param max_iter: Maximum iterations of NMF updates. Will end early if
+        solution converges.
+    :param beta_loss: Beta-loss function, see sklearn documentation for
+        details.
+    :param init: Initialisation method for H and W during decomposition.
+        Used only where one of the matrices during bi-cross steps is not
+        fixed. See sklearn documentation for values.
+    :param progress_bar: Show a progress bar while running.
+    :returns: Dictionary with entry for each rank, containing a list of
+        results for each shuffle (as a :class:`BicvResult` object)
     """
     # Set up a dictionary of arguments
     args: Dict[str, Any] = {}
@@ -554,20 +650,123 @@ def rank_selection(x: pd.DataFrame,
                                                       n=shuffles)
 
     # Make a generator of parameter objects to pass to bicv
-    params: Iterable[BicvParameters] = itertools.chain.from_iterable(
+    params: List[BicvParameters] = list(itertools.chain.from_iterable(
         [[BicvParameters(mx=x, rank=k, seed=rng, **args) for x in shuffles]
-         for k in ranks]
-    )
+         for k in sorted(ranks, reverse=True)]
+    ))
 
     # Get results
     # No real use in multiprocessing, sklearn implementation generally makes
     # good use of multiple cores anyway. Multiprocessing just makes processes
     # compete for resources and is slower.
-    results: List[BicvResult] = list(map(bicv, params))
+    res_map: Iterable = (
+        map(bicv, tqdm(params)) if progress_bar else map(bicv, params))
+    results: List[BicvResult] = sorted(
+        list(res_map),
+        key=lambda x: x.parameters.rank
+    )
+    # Collect results from the ranks into lists, and place in a dictionary
+    # with key = rank
+    grouped_results: Dict[int, List[BicvResult]] = {
+        rank_i: list(list_i) for rank_i, list_i in
+        itertools.groupby(results, key=lambda z: z.parameters.rank)
+    }
+    # Validate that there are the same number of results for each rank.
+    # Decomposition shouldn't silently fail, but best not to live in a
+    # world of should. Currently deciding to warn user and still return
+    # results.
+    if len(set(len(y) for y in grouped_results.values())) != 1:
+        logging.error(("Uneven number of results returned for each rank, "
+                       "some rank selection iterations may have failed."))
 
-    # Collect results from the rank into lists
+    return grouped_results
 
-    return results
+
+def plot_rank_selection(results: Dict[int, List[BicvResult]],
+                        exclude: Optional[Iterable[str]] = None,
+                        geom: str = 'box',
+                        summarise: str = 'mean',
+                        jitter: bool = None,
+                        n_col: int = None) -> plotnine.ggplot:
+    """Plot rank selection results from bi-cross validation.
+
+    Draw either box plots or violin plots showing statistics comparing
+    A and A' from all bi-cross validation results across a range of ranks.
+    The plotting library used is `plotnine`; the returned plot object
+    can be saved or drawn using `plt_obj.save` or `plt_obj.draw` respectively.
+
+    :param results: Dictionary of results, with rank as key and a list of
+        :class:`BicvResult` for that rank as value
+    :param exclude: Measures from :class:`BicvResult` not to plot.
+    :param geom: Type of plot to draw. Accepts either 'box' or 'violin'
+    :param summarise: How to summarise the statistics across the folds
+        of a given shuffle.
+    :param jitter: Draw individual points for each shuffle above the main plot.
+    :param n_col: Number of columns in the plot. If blank, attempts to guess
+        a sensible value.
+    :return: :class:`plotnine.ggplot` instance
+    """
+    # Intended a user friendly interface to plot rank selection results
+    # so takes string argument rather than functions etc.
+    if summarise not in ['mean', 'median']:
+        raise ValueError("summarise must be one of mean, median")
+    exclude = {} if exclude is None else exclude
+    summarise_fn: Callable[[np.ndarray], float] = (
+        np.mean if summarise == "mean" else np.median)
+    # What type of plot to draw
+    if geom not in {"box", "violin"}:
+        raise ValueError("geom must be on of box, violin")
+    requested_geom = (plotnine.geom_boxplot if geom == 'box' else
+                      plotnine.geom_violin)
+    # Decide number of cols
+    # My assumption is that many people will be viewing in a notebook,
+    # so long may be preferable to wide
+    if n_col is None:
+        n_col = 3 if len(results) < 15 else 1
+
+    # Determine which columns we're interested in plotting
+    measures: list[str] = list(set(
+        name for (name, value) in
+        inspect.getmembers(
+            BicvResult, lambda x: isinstance(x, collections._tuplegetter))
+    ).difference({"a", "parameters", *exclude}).union({"rank"}))
+    # Get results and stack so measure is a column
+    df: pd.DataFrame = (
+        BicvResult.results_to_table(results, summarise=summarise_fn)[measures]
+    )
+    # Make longer so we have measure as a column
+    stacked: pd.DataFrame = (
+        df
+        .set_index('rank')
+        .stack(dropna=False)
+        .to_frame(name='value')
+        .reset_index(names=["rank", "measure"])
+    )
+
+    # Plot
+    plot: plotnine.ggplot = (
+            plotnine.ggplot(
+                data=stacked,
+                mapping=plotnine.aes(
+                    x="factor(rank)",
+                    y="value"
+                )
+            )
+            + plotnine.facet_wrap(facets="measure", scales="free_y",
+                                  ncol=n_col)
+            + requested_geom(mapping=plotnine.aes(fill="measure"))
+            + plotnine.xlab("Rank")
+            + plotnine.ylab("Value")
+            + plotnine.scale_fill_discrete(guide=False)
+    )
+
+    # If not specifically requested, decide whether to add a jitter
+    if jitter is None:
+        jitter = False if len(list(results.values())[0]) > 150 else True
+    if jitter:
+        plot = plot + plotnine.geom_jitter()
+
+    return plot
 
 
 def bicv(params: Optional[BicvParameters] = None, **kwargs) -> BicvResult:
@@ -582,16 +781,17 @@ def bicv(params: Optional[BicvParameters] = None, **kwargs) -> BicvResult:
 
     if params is None:
         params = BicvParameters(**kwargs)
-    # No multiprocessing for folds - let multiprocessing or spread across
-    # nodes happen at a higher level
+
     runs: Iterable[BicvResult] = map(__bicv_single,
                                      (params for _ in range(9)),
                                      (params.mx.fold(i) for i in range(9))
                                      )
 
     # Combine results from each fold
+    logging.info("Starting bi-cross validation")
     joined: BicvResult = BicvResult.join_folds(list(runs))
     return joined
+
 
 def __bicv_single(params: BicvParameters, fold: BicvFold) -> BicvResult:
     """Run bi-cross validation on a single fold. Return a results tuple with
@@ -604,6 +804,8 @@ def __bicv_single(params: BicvParameters, fold: BicvFold) -> BicvResult:
     # Get three seeds for the decompositions
     rng: np.random.Generator = np.random.default_rng(params.seed)
     decomp_seeds: np.ndarray = rng.integers(0, 4294967295, 3)
+
+    logging.info("Starting")
 
     model_D: NMF = NMF(n_components=params.rank,
                        init=params.init,
@@ -669,9 +871,9 @@ def __bicv_single(params: BicvParameters, fold: BicvFold) -> BicvResult:
             _cosine_similarity(fold.A.values, Ma_calc)]),
         l2_norm=np.array([_l2norm_calc(fold.A.values, Ma_calc)]),
         reconstruction_error=np.array([_beta_divergence(fold.A.values,
-                                              W_a,
-                                              H_a.T,
-                                              params.beta_loss)])
+                                                        W_a,
+                                                        H_a.T,
+                                                        params.beta_loss)])
     )
 
 
@@ -684,22 +886,27 @@ def _rss(A: np.ndarray, A_prime: np.ndarray) -> float:
     :param A_prime: Imputed matrix A
     :returns: RSS
     """
-    return ((A - A_prime)**2).sum().sum()
+    return ((A - A_prime) ** 2).sum().sum()
+
 
 def _rsquared(A: np.ndarray, A_prime: np.ndarray) -> float:
     """Explained variance
 
     Consider the matrix as a flattened 1d array, and calculate the R^2. This
     calculation varies from original Enterosignatures paper in that we
-    subtract the mean.
+    subtract the mean. In the event R^2 would be inf/-inf (when total sum of
+    squares is 0), this instead returns nan to make taking mean/median simpler
+    later on.
 
     :param A: Held-out matrix A
     :param A_prime: Imputed matrix A
     :returns: R^2
     """
     A_mean: float = np.mean(np.ravel(A))
-    tss: float = ((A - A_mean)**2).sum().sum()
-    return 1 - (_rss(A, A_prime) / tss)
+    tss: float = ((A - A_mean) ** 2).sum().sum()
+    rsq: float = 1 - (_rss(A, A_prime) / tss)
+    return np.nan if abs(rsq) == np.inf else rsq
+
 
 def _cosine_similarity(A: np.ndarray, A_prime: np.ndarray) -> float:
     """Cosine similarity between two flattened matrices
@@ -716,6 +923,7 @@ def _cosine_similarity(A: np.ndarray, A_prime: np.ndarray) -> float:
         x_flat.dot(x_flat) * wh_flat.dot(wh_flat)
     )
 
+
 def _l2norm_calc(A: np.ndarray, A_prime: np.ndarray) -> float:
     """Calculates the L2 norm metric between two matrices
 
@@ -723,7 +931,8 @@ def _l2norm_calc(A: np.ndarray, A_prime: np.ndarray) -> float:
     :param A_prime: Imputed matrix A
     :returns: L2 norm
     """
-    return np.sqrt(np.sum((np.array(A) - np.array(A_prime))**2))
+    return np.sqrt(np.sum((np.array(A) - np.array(A_prime)) ** 2))
+
 
 def _sparsity(x: np.ndarray) -> float:
     """Sparsity of a matrix

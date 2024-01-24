@@ -32,7 +32,7 @@ RE_SHORTEN: re.Pattern = re.compile(r".*;([^\;?]+[;\?]*)$")
 logging.basicConfig(
     format='%(levelname)s [%(asctime)s]: %(message)s',
     datefmt='%d/%m/%Y %I:%M:%S',
-    level=logging.DEBUG
+    level=logging.ERROR
 )
 
 class EnteroException(Exception):

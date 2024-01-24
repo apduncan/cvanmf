@@ -7,6 +7,7 @@
 
 example.ipynb
 autoapi/index
+click.rst
 changelog.md
 contributing.md
 conduct.md
