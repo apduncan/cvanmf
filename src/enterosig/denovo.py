@@ -434,12 +434,13 @@ class BicvSplit:
         return f'BicvSplit[i={self.i}, shape=[{self.shape}]]'
 
 
-class BicvParameters(NamedTuple):
-    """Parameters for a single bifold cross-validation run. See sklearn NMF
-    documentation for more detail on parameters."""
-    mx: Optional[BicvSplit]
-    """Shuffled matrix split into 9 parts for bi-cross validation. When
-    returning results and keep_mats is False, this will be set to None to
+class NMFParameters(NamedTuple):
+    """Parameters for a single decomposition, or iterations of bi-cross
+    validation. See sklearn NMF documentation for more detail on parameters."""
+    x: Optional[Union[BicvSplit, pd.DataFrame]]
+    """For a simple decomposition, a matrix as a dataframe. For a bi-cross
+    validation iteration, this should be the shuffled matrix split into 9 parts.
+    When returning results and keep_mats is False, this will be set to None to
     avoid passing and saving large data."""
     rank: int
     """Rank of the decomposition."""
@@ -466,7 +467,7 @@ class BicvResult(NamedTuple):
     """Results from a single bi-cross validation run. For each BicvSplit there
     are 9 folds, for which the top left submatrix (A) is estimated (A') using
     the other portions."""
-    parameters: BicvParameters
+    parameters: NMFParameters
     """Parameters used during this run."""
     a: Optional[List[np.ndarray]]
     """Reconstructed matrix A for each fold. Not included when keep_mats is
@@ -541,7 +542,7 @@ class BicvResult(NamedTuple):
         }
         # Also include the shuffle number from shuffle params, might be of
         # interest to users
-        params['shuffle_num'] = self.parameters.mx.i
+        params['shuffle_num'] = self.parameters.x.i
         # Join these two and turn into a series
         series: pd.Series = pd.Series(
             {**res_dict, **params}
@@ -652,8 +653,8 @@ def rank_selection(x: pd.DataFrame,
                                                       n=shuffles)
 
     # Make a generator of parameter objects to pass to bicv
-    params: List[BicvParameters] = list(itertools.chain.from_iterable(
-        [[BicvParameters(mx=x, rank=k, seed=rng, **args) for x in shuffles]
+    params: List[NMFParameters] = list(itertools.chain.from_iterable(
+        [[NMFParameters(mx=x, rank=k, seed=rng, **args) for x in shuffles]
          for k in sorted(ranks, reverse=True)]
     ))
 
@@ -771,7 +772,7 @@ def plot_rank_selection(results: Dict[int, List[BicvResult]],
     return plot
 
 
-def bicv(params: Optional[BicvParameters] = None, **kwargs) -> BicvResult:
+def bicv(params: Optional[NMFParameters] = None, **kwargs) -> BicvResult:
     """Perform a single run of bi-cross validation
 
     Perform one run of bi-cross validation. Parameters can either be passed
@@ -782,11 +783,11 @@ def bicv(params: Optional[BicvParameters] = None, **kwargs) -> BicvResult:
     """
 
     if params is None:
-        params = BicvParameters(**kwargs)
+        params = NMFParameters(**kwargs)
 
     runs: Iterable[BicvResult] = map(__bicv_single,
                                      (params for _ in range(9)),
-                                     (params.mx.fold(i) for i in range(9))
+                                     (params.x.fold(i) for i in range(9))
                                      )
 
     # Combine results from each fold
@@ -795,7 +796,7 @@ def bicv(params: Optional[BicvParameters] = None, **kwargs) -> BicvResult:
     return joined
 
 
-def __bicv_single(params: BicvParameters, fold: BicvFold) -> BicvResult:
+def __bicv_single(params: NMFParameters, fold: BicvFold) -> BicvResult:
     """Run bi-cross validation on a single fold. Return a results tuple with
     single entries in all the result fields, these are later joined. This
     implementation is based on scripts from
@@ -1141,7 +1142,7 @@ def cli_rank_selection(
     logging.info("Rank selection completed")
 
 
-def decompose(
+def decompositions(
         x: pd.DataFrame,
         ranks: Iterable[int],
         random_starts: int = 100,
@@ -1188,13 +1189,165 @@ def decompose(
     :param max_iter: Maximum number of iterations during decomposition. Will
         terminate earlier if solution converges
     :param beta_loss: Beta loss function for NMF decomposition.
-    :param init: Initialisation method for H and W matrices on first step. Defaults to
-    non-negative SVD with small random values added.
+    :param init: Initialisation method for H and W matrices on first step.
+        Defaults to random.
     :param progress_bar: Display progress bar.
     """
-    raise NotImplementedError()
+
+    # Set up a dictionary of arguments
+    args: Dict[str, Any] = {}
+    if alpha is not None:
+        args['alpha'] = alpha
+    if l1_ratio is not None:
+        args['l1_ratio'] = l1_ratio
+    if max_iter is not None:
+        args['max_iter'] = max_iter
+    if beta_loss is not None:
+        args['beta_loss'] = beta_loss
+    if init is not None:
+        args['init'] = init
+
+    # Set up random generator for this whole run
+    rng: np.random.Generator = np.random.default_rng(seed)
+
+    # Make a generator of parameter objects to pass to bicv
+    params: List[NMFParameters] = list(itertools.chain.from_iterable(
+        [[NMFParameters(x=x, rank=k, seed=seed, **args) for seed in
+          rng.integers(low=0, high=4294967295, size=random_starts)]
+         for k in sorted(ranks, reverse=True)]
+    ))
+
+    # Get results
+    # No real use in multiprocessing, sklearn implementation generally makes
+    # good use of multiple cores anyway. Multiprocessing just makes processes
+    # compete for resources and is slower.
+    res_map: Iterable = (
+        map(decompose, tqdm(params)) if progress_bar else map(bicv, params))
+    results: List[Decomposition] = sorted(
+        list(res_map),
+        key=lambda x: x.parameters.rank
+    )
+
+    # Collect results from the ranks into lists, and place in a dictionary
+    # with key = rank
+    grouped_results: Dict[int, List[Decomposition]] = {
+        rank_i: list(list_i) for rank_i, list_i in
+        itertools.groupby(results, key=lambda z: z.rank)
+    }
+
+    # Select the best results for each rank
+    # TODO: Move this to a reduce so not holding all decompositions in memory
+
+    return grouped_results
+
+
+def decompose(params: NMFParameters) -> Decomposition:
+    """Perform a single decomposition of a matrix.
+
+    :param params: Decomposition parameters as a :class:`NMFParameters` object.
+    :return: A single decomposition
+    """
+
+    model: NMF = NMF(
+        n_components=params.rank,
+        random_state=params.seed,
+        alpha_H=params.alpha,
+        alpha_W=params.alpha,
+        l1_ratio=params.l1_ratio,
+        max_iter=params.max_iter,
+        beta_loss=params.beta_loss,
+        init=params.init,
+        solver="mu"
+    )
+
+    # Get decomposition arrays
+    W: np.ndarray = model.fit_transform(params.x)
+    H: np.ndarray = model.components_
+
+    # Make names for the signatures
+    signature_names: List[str] = [f'S{i}' for i in range(1, params.rank+1)]
+
+    # Convert back to dataframes
+    W_df: pd.DataFrame = pd.DataFrame(W,
+                                      index=params.x.index,
+                                      columns=signature_names)
+    H_df: pd.DataFrame = pd.DataFrame(H,
+                                      index=signature_names,
+                                      columns=params.x.columns)
+
+    return Decomposition(
+        parameters=params,
+        h=H_df,
+        w=W_df
+    )
 
 
 class Decomposition:
-    def __init__(self):
-        raise NotImplementedError()
+    """Decomposition of a single """
+
+    def __init__(self,
+                 parameters: NMFParameters,
+                 h: pd.DataFrame,
+                 w: pd.DataFrame) -> None:
+        self.__h: pd.DataFrame = h
+        self.__w: pd.DataFrame = w
+        self.__params: NMFParameters = parameters
+
+    @property
+    def h(self) -> pd.DataFrame:
+        return self.__h
+
+    @property
+    def w(self) -> pd.DataFrame:
+        return  self.__w
+
+    @property
+    def parameters(self) -> NMFParameters:
+        return self.__params
+
+    @property
+    def cosine_similarity(self) -> float:
+        return _cosine_similarity(self.parameters.x.values,
+                                  self.w.dot(self.h).values)
+
+    @property
+    def r_squared(self) -> float:
+        return _rsquared(self.parameters.x.values,
+                         self.w.dot(self.h).values)
+
+    @property
+    def rss(self) -> float:
+        return _rss(self.parameters.x.values,
+                    self.w.dot(self.h).values)
+
+    @property
+    def l2_norm(self) -> float:
+        return _l2norm_calc(self.parameters.x.values,
+                            self.w.dot(self.h).values)
+
+    @property
+    def sparsity_w(self) -> float:
+        return _sparsity(self.w.values)
+
+    @property
+    def sparsity_h(self) -> float:
+        return _sparsity(self.h.values)
+
+    @property
+    def beta_divergence(self) -> float:
+        return _beta_divergence(self.parameters.x,
+                                self.w.values,
+                                self.h.values,
+                                beta=self.parameters.beta_loss)
+
+    def __getattr__(self, item):
+        """Allow access to parameter attributes through this class as a
+        convenience."""
+        # Get parameter attributes
+        if item in self.parameters._asdict():
+            return self.parameters._asdict()[item]
+        raise AttributeError()
+
+    def __repr__(self) -> str:
+        return (f'Decomposition[rank={self.rank}, '
+                f'beta_divergence={self.beta_divergence:.3g}]')

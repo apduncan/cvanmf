@@ -11,7 +11,7 @@ import pytest
 
 from enterosig import models
 from enterosig.denovo import BicvSplit, BicvFold, bicv, _cosine_similarity, rank_selection, BicvResult, \
-    plot_rank_selection
+    plot_rank_selection, decompose, NMFParameters, decompositions
 
 
 def test_bicv_split():
@@ -197,4 +197,23 @@ def test_plot_rank_selection(tmp_path: pathlib.Path):
     plt.save(pth)
     import subprocess
     subprocess.run(["open", str(pth)])
+    foo = "bar"
+
+
+def test_decompose():
+    x: pd.DataFrame = models.example_abundance().iloc[:50, :50]
+    res = decompose(NMFParameters(
+        x=x,
+        rank=3
+    ))
+    foo = "bar"
+
+
+def test_decompositions():
+    x: pd.DataFrame = models.example_abundance().iloc[:50, :50]
+    res = decompositions(
+        x=x,
+        random_starts=3,
+        ranks=[3,4]
+    )
     foo = "bar"
