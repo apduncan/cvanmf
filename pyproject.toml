@@ -38,6 +38,7 @@ patch_without_tag = true                    # patch release by default
 
 [tool.poetry.scripts]
 es_fit = "enterosig.reapply:cli"
+rank_select = "enterosig.denovo:cli_rank_selection"
 #es_ui = "enterosig.streamlist"
 
 [build-system]

@@ -28,13 +28,6 @@ RE_SPLIT_GENUS: re.Pattern = re.compile(r"([\w]+)_\w$")
 # Match the last named rank, plus any following ?s
 RE_SHORTEN: re.Pattern = re.compile(r".*;([^\;?]+[;\?]*)$")
 
-# Instantiate logger
-logging.basicConfig(
-    format='%(levelname)s [%(asctime)s]: %(message)s',
-    datefmt='%d/%m/%Y %I:%M:%S',
-    level=logging.ERROR
-)
-
 class EnteroException(Exception):
     """Exception raised when unable to proceed with enterosignature 
     transformation"""

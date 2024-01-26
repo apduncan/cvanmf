@@ -19,11 +19,13 @@ import glob
 import inspect
 import itertools
 import logging
+import os
 import pathlib
 import re
 from typing import (Optional, NamedTuple, List, Iterable, Union, Tuple, Set,
                     Any, Dict, Callable)
 
+import click
 import numpy as np
 import pandas as pd
 import plotnine
@@ -941,3 +943,258 @@ def _sparsity(x: np.ndarray) -> float:
     :returns: Sparsity, 0 to 1
     """
     return 1 - (np.count_nonzero(x) / x.size)
+
+
+@click.command()
+@click.option("-i",
+              "--input",
+              required=True,
+              type=click.Path(exists=True, dir_okay=False),
+              help="""Matrix to be decomposed, in character delimited 
+              format. Use -d/--delimiter to set delimiter.""")
+@click.option("-o",
+              "--output_dir",
+              required=False,
+              type=click.Path(dir_okay=True),
+              default=os.getcwd(),
+              help="""Directory to write output. Defaults to current directory.
+              Output is a table with a row for each shuffle and rank 
+              combination, and columns for each of the rank selection measures 
+              (R^2, cosine similarity, etc.)""")
+@click.option("-d",
+              "--delimiter",
+              required=False,
+              type=str,
+              default="\t",
+              help="""Delimiter to use for input and output tables. Defaults
+              to tab.""")
+@click.option("-i",
+              "--shuffles",
+              required=False,
+              type=int,
+              default=100,
+              show_default=True,
+              help="""Number of times to shuffle input matrix. Bi-cross 
+              validation is run once on each shuffle, for each rank.""")
+@click.option("--progres/--no-progress",
+              default=True,
+              show_default=True,
+              help="""Display progress bar showing number of bi-cross 
+              validation iterations completed and remaining.""")
+@click.option("--log_warning", "verbosity", flag_value="warning",
+              default=True,
+              help="Log only warnings or higher.")
+@click.option("--log_info", "verbosity", flag_value="info",
+              help="Log progress information as well as warnings etc.")
+@click.option("--log_debug", "verbosity", flag_value="debug",
+              help="Log debug info as well as info, warnings, etc.")
+@click.option("--seed",
+              required=False,
+              type=int,
+              help="""Seed to initialise random state. Specify if results
+              need to be reproducible.""")
+@click.option("-l", "--rank_min",
+              required=True,
+              type=int,
+              help="""Lower bound of ranks to search. Must be >= 2.""")
+@click.option("-u", "--rank_max",
+              required=True,
+              type=int,
+              help="""Upper bound of ranks to search. Must be >= 2.""")
+@click.option("-s", "--rank_step",
+              required=False,
+              type=int,
+              default=1,
+              help="""Step between ranks to search.""")
+@click.option("--l1_ratio",
+              required=False,
+              type=float,
+              default=0.0,
+              show_default=True,
+              help="""Regularisation mixing parameter. In range 0.0 <= l1_ratio 
+              <= 1.0. This controls the mix between sparsifying and densifying
+              regularisation. 1.0 will encourage sparsity, 0.0 density.""")
+@click.option("--max_iter",
+              required=False,
+              type=int,
+              default=3000,
+              show_default=True,
+              help="""Maximum number of iterations during decomposition. Will 
+              terminate earlier if solution converges. Warnings will be emitted
+              when the solutions fail to converge.""")
+@click.option("--beta_loss",
+              required=False,
+              type=click.Choice(
+                  ['kullback-leibler', 'frobenius', 'itakura-saito']),
+              default="kullback-leibler",
+              show_default=True,
+              help="""Beta loss function for NMF decomposition.""")
+@click.option("--init",
+              required=False,
+              type=click.Choice(
+                  ["nndsvdar", "random", "nndsvd", "nndsvda"]),
+              default="nndsvdar",
+              show_default=True,
+              help="""Method to use when intialising H and W for 
+              decomposition.""")
+def cli_rank_selection(
+        input: str,
+        output_dir: str,
+        delimiter: str,
+        shuffles: int,
+        progress: bool,
+        verbosity: str,
+        seed: int,
+        rank_min: int,
+        rank_max: int,
+        rank_step: int,
+        l1_ratio: float,
+        alpha: float,
+        max_iter: int,
+        beta_loss: str,
+        init: str,
+) -> None:
+    """Rank selection for NMF using 9 fold bi-cross validation
+
+    Attempt to identify a suitable rank k for decomposition of input matrix X.
+    This is done by shuffling the matrix a number of times, and for each
+    shuffle diving it into 9 submatrices. Each of these nine is held out and
+    and estimate learnt from the remaining matrices, and the quality of the
+    estimated matrix used to identify a suitable rank.
+
+    The underlying NMF implementation is from scikit-learn, and there is more
+    documentation available there for many of the NMF specific parameters there.
+    """
+
+    # Configure logger
+    log_level: int = logging.WARNING
+    match verbosity:
+        case "debug":
+            log_level = logging.DEBUG
+        case "info":
+            log_level = logging.INFO
+    logging.basicConfig(
+        format='%(levelname)s [%(asctime)s]: %(message)s',
+        datefmt='%d/%m/%Y %I:%M:%S',
+        level=log_level
+    )
+
+    # Validate parameters
+    # Rank min / max in right order
+    rank_min, rank_max = min(rank_min, rank_max), max(rank_min, rank_max)
+    ranks: List[int] = list(range(rank_min, rank_max, rank_step))
+    if len(ranks) < 2:
+        logging.fatal(("Must search 2 or more ranks; ranks provided were "
+                       "%s"), str(ranks))
+        return None
+
+    # Read input data
+    x: pd.DataFrame = pd.read_csv(input, delimiter=delimiter, index_col=0)
+    # Check reasonable dimensions
+    if x.shape[0] < 2 or x.shape[1] < 2:
+        logging.fatal("Loaded matrix invalid shape: (%s)", x.shape)
+        return
+    # TODO: Check all columns numeric
+
+    # Log params being used
+    param_str: str = (
+        f"Data Locations\n"
+        f"------------------------------\n"
+        f"Input:            {input}\n"
+        f"Output:           {output_dir}\n"
+        f""
+        f"Bi-cross validation parameters\n"
+        f"-----------------------------\n-"
+        f"Seed:             {seed}\n"
+        f"Ranks:            {ranks}\n"
+        f"Shuffles:         {shuffles}\n"
+        f"L1 Ratio:         {l1_ratio}\n"
+        f"Alpha:            {alpha}\n"
+        f"Max Iterations:   {max_iter}\n"
+        f"Beta Loss:        {beta_loss}\n"
+        f"Initialisation:   {init}\n"
+    )
+    logging.info(param_str)
+
+    # Perform rank selection
+    results: Dict[int, List[BicvResult]] = rank_selection(
+        x=x,
+        ranks=ranks,
+        shuffles=shuffles,
+        l1_ratio=l1_ratio,
+        alpha=alpha,
+        max_iter=max_iter,
+        beta_loss=beta_loss,
+        init=init,
+        progress_bar=progress
+    )
+
+    # Write output
+    rank_tbl: pd.DataFrame = BicvResult.results_to_table(results)
+    rank_plt: plotnine.ggplot = plot_rank_selection(results)
+    out_path: pathlib.Path = pathlib.Path(output_dir)
+    logging.info("Writing results to %s", str(out_path))
+    rank_tbl.to_csv(str(out_path / "rank_selection.tsv"), sep=delimiter)
+    rank_plt.save(out_path / "rank_selection.pdf")
+
+    # Completion
+    logging.info("Rank selection completed")
+
+
+def decompose(
+        x: pd.DataFrame,
+        ranks: Iterable[int],
+        random_starts: int = 100,
+        top_n: int = 5,
+        top_criteria: str = "reconstruction_error",
+        seed: Optional[Union[int, np.random.Generator]] = None,
+        alpha: Optional[float] = None,
+        l1_ratio: Optional[float] = None,
+        max_iter: Optional[int] = None,
+        beta_loss: Optional[str] = None,
+        init: Optional[str] = "random",
+        progress_bar: bool = True
+) -> Dict[int, List[Decomposition]]:
+    """Get the best decompositions for input matrix for one or more ranks.
+
+    The model obtained by NMF decomposition depend on the initial values of the
+    two matrices W and H; different initialisations lead to different solutions.
+    Two approaches to initialising H and W are to attempt multiple random
+    initialisations and select the best ones based on criteria such as
+    reconstructions error, or to adopt a deterministic method (such as
+    nndsvd) to set initial values.
+
+    This function provides both approaches, but defaults to multiple random
+    initialisations. To use one of the deterministic methods, change the
+    initialisation method using `init`.
+
+    A dictionary with one entry for each rank of decomposition requested is
+    return, with the values being a list of top_n best decompositions for that
+    rank. Where a deterministic method is used, the list will only have one
+    item.
+
+    :param x: Matrix to be decomposed
+    :param ranks: Rank(s) of decompositions to be produced
+    :param random_starts: Number of random initialisations to be tried for
+        each rank. Ignored if using a deterministic initialisations.
+    :param top_n: Number of decompositions to be return for each rank.
+    :param top_criteria: Criteria to use when determining which are the top
+        decompositions, can be any of the criteria from :class:`BicvResult`
+    :param seed: Seed or random generator used
+    :param alpha: Regularisation parameter approach to both H and W matrices.
+    :param l1_ratio: Regularisation mixing parameter. In range 0.0 <= l1_ratio
+          <= 1.0. This controls the mix between sparsifying and densifying
+          regularisation. 1.0 will encourage sparsity, 0.0 density
+    :param max_iter: Maximum number of iterations during decomposition. Will
+        terminate earlier if solution converges
+    :param beta_loss: Beta loss function for NMF decomposition.
+    :param init: Initialisation method for H and W matrices on first step. Defaults to
+    non-negative SVD with small random values added.
+    :param progress_bar: Display progress bar.
+    """
+    raise NotImplementedError()
+
+
+class Decomposition:
+    def __init__(self):
+        raise NotImplementedError()
