@@ -1,6 +1,7 @@
 """Tests for denovo ES generation."""
 import itertools
 import pathlib
+import random
 from typing import List
 
 import matplotlib.pyplot
@@ -214,6 +215,12 @@ def test_decompositions():
     res = decompositions(
         x=x,
         random_starts=3,
-        ranks=[3,4]
+        ranks=[3,4],
+        top_n=2
     )
+    p = res[3][0].plot_modelfit()
+    a = pd.Series(random.choices(["a", "b"], k=len(res[3][0].model_fit)))
+    a.index = res[3][0].model_fit.index
+    p = res[3][0].plot_modelfit(a)
     foo = "bar"
+

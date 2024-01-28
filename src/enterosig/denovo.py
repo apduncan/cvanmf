@@ -16,12 +16,14 @@ from __future__ import annotations
 
 import collections
 import glob
+import hashlib
 import inspect
 import itertools
 import logging
 import os
 import pathlib
 import re
+from functools import cached_property
 from typing import (Optional, NamedTuple, List, Iterable, Union, Tuple, Set,
                     Any, Dict, Callable)
 
@@ -29,8 +31,10 @@ import click
 import numpy as np
 import pandas as pd
 import plotnine
+import sklearn
 from sklearn.decomposition import NMF, non_negative_factorization
 from sklearn.decomposition._nmf import _beta_divergence
+from sklearn.metrics.pairwise import cosine_similarity
 from tqdm import tqdm
 
 # Type aliases
@@ -395,9 +399,9 @@ class BicvSplit:
             while col < 3:
                 done += 1
                 all_sub_matrices[done - 1] = df.iloc[
-                                             thresholds_feat[row]:thresholds_feat[row + 1],
-                                             thresholds_sample[col]: thresholds_sample[col + 1]
-                                             ]
+                         thresholds_feat[row]:thresholds_feat[row + 1],
+                         thresholds_sample[col]: thresholds_sample[col + 1]
+                         ]
                 col += 1
             row += 1
             col = 0
@@ -654,7 +658,7 @@ def rank_selection(x: pd.DataFrame,
 
     # Make a generator of parameter objects to pass to bicv
     params: List[NMFParameters] = list(itertools.chain.from_iterable(
-        [[NMFParameters(mx=x, rank=k, seed=rng, **args) for x in shuffles]
+        [[NMFParameters(x=x, rank=k, seed=rng, **args) for x in shuffles]
          for k in sorted(ranks, reverse=True)]
     ))
 
@@ -1147,7 +1151,7 @@ def decompositions(
         ranks: Iterable[int],
         random_starts: int = 100,
         top_n: int = 5,
-        top_criteria: str = "reconstruction_error",
+        top_criteria: str = "beta_divergence",
         seed: Optional[Union[int, np.random.Generator]] = None,
         alpha: Optional[float] = None,
         l1_ratio: Optional[float] = None,
@@ -1180,7 +1184,8 @@ def decompositions(
         each rank. Ignored if using a deterministic initialisations.
     :param top_n: Number of decompositions to be return for each rank.
     :param top_criteria: Criteria to use when determining which are the top
-        decompositions, can be any of the criteria from :class:`BicvResult`
+        decompositions. Can be one of beta_divergence, rss, r_squared,
+        cosine_similairty, or l2_norm.`
     :param seed: Seed or random generator used
     :param alpha: Regularisation parameter approach to both H and W matrices.
     :param l1_ratio: Regularisation mixing parameter. In range 0.0 <= l1_ratio
@@ -1207,6 +1212,23 @@ def decompositions(
     if init is not None:
         args['init'] = init
 
+    # Can't return more results than random starts
+    top_n = min(random_starts, top_n)
+
+    # Only one pe rank with deterministic intialisations
+    if init not in {"random", "nndsvdar"}:
+        logging.info("Using deterministic initialisation; only a single"
+                     "result will be returned for each rank.")
+        random_starts = 1
+
+    # Check the top_criteria is a valid property
+    if not top_criteria in  Decomposition.TOP_CRITERIA:
+        raise ValueError(
+            f"Invalid value for top_criteria: {top_criteria}. "
+            f"Must be one of {set(Decomposition.TOP_CRITERIA.keys())}"
+        )
+    take_high: bool = Decomposition.TOP_CRITERIA[top_criteria]
+
     # Set up random generator for this whole run
     rng: np.random.Generator = np.random.default_rng(seed)
 
@@ -1231,12 +1253,12 @@ def decompositions(
     # Collect results from the ranks into lists, and place in a dictionary
     # with key = rank
     grouped_results: Dict[int, List[Decomposition]] = {
-        rank_i: list(list_i) for rank_i, list_i in
+        rank_i: sorted(list_i,
+                       key=lambda x: getattr(x, top_criteria),
+                       reverse=take_high)[:top_n]
+        for rank_i, list_i in
         itertools.groupby(results, key=lambda z: z.rank)
     }
-
-    # Select the best results for each rank
-    # TODO: Move this to a reduce so not holding all decompositions in memory
 
     return grouped_results
 
@@ -1283,7 +1305,28 @@ def decompose(params: NMFParameters) -> Decomposition:
 
 
 class Decomposition:
-    """Decomposition of a single """
+    """Decomposition of a matrix.
+
+    This class can be saved and restored from disk in two methods: either
+    pickling which limits save and load to python, or to text format to
+    facilitate easier analysis in other environments such as R. By default
+    the input matrix is also saved; this makes loading convenient, but is
+    space inefficient, and can lead to copies of large matrices in memory
+    when loading. Instead, you can choose to save without the input matrix,
+    in which case you wil need to provide the input matrix when estoring
+    results. When saving without the matrix, a hash is saved and matched
+    against the provided matrix when loading, and a warning issued on hash
+    mismatch."""
+
+    TOP_CRITERIA: Dict[str, bool] = dict(
+        cosine_similarity=True,
+        r_squared=True,
+        rss=False,
+        l2_norm=False,
+        beta_divergence=False
+    )
+    """Defines which criteria are available to select the best decomposition
+    based on, and whether to take high values (True) or low values (False)."""
 
     def __init__(self,
                  parameters: NMFParameters,
@@ -1292,6 +1335,7 @@ class Decomposition:
         self.__h: pd.DataFrame = h
         self.__w: pd.DataFrame = w
         self.__params: NMFParameters = parameters
+        self.__input_hash: Optional[int] = None
 
     @property
     def h(self) -> pd.DataFrame:
@@ -1340,7 +1384,79 @@ class Decomposition:
                                 self.h.values,
                                 beta=self.parameters.beta_loss)
 
-    def __getattr__(self, item):
+    @property
+    def wh(self) -> pd.DataFrame:
+        """Product of decomposed matrices W and H which approximates input,"""
+        return self.w.dot(self.h)
+
+    @property
+    def model_fit(self) -> pd.Series:
+        """How well each sample i is described by the model, expressed by the
+        cosine similarity between X_i and (WH)_i."""
+        cos_sim: pd.Series = pd.Series(
+            np.diag(cosine_similarity(
+                self.wh, self.parameters.x.T)),
+            index=self.wh.index,
+            name="model_fit"
+        )
+        return cos_sim
+
+    @property
+    def input_hash(self) -> int:
+        """Hash of the input matrix. Used to validate loads where data
+        was not included in the saved form."""
+        # Potentially expensive, only calculate if requested
+        if self.__input_hash is None:
+            self.__input_hash = int(
+                hashlib.sha256(
+                    pd.util.hash_pandas_object(
+                        self.parameters.x, index=True
+                    ).values).hexdigest(),
+                16)
+        return self.__input_hash
+
+    def plot_modelfit(self,
+                      group: Optional[pd.Series] = None
+                      ) -> plotnine.ggplot:
+        """Plot model fit distribution.
+
+        This provides a histogram of the model fit of samples by defaultt. If
+        a grouping is provide, this will instead produce boxplots with each
+        box being the distribution within a group.
+
+        :param group: Series giving label for group which each sample
+            belongs to. Sample which are not in the group series will
+            be dropped from results with warning.
+        :return: Histogram or boxplots
+        """
+
+        # No grouping means histogram
+        if group is None:
+            return (
+                plotnine.ggplot(
+                    self.model_fit.to_frame(name="model_fit"),
+                    mapping=plotnine.aes(
+                        x="model_fit"
+                    )
+                ) +
+                plotnine.geom_histogram() +
+                plotnine.geom_vline(xintercept=self.model_fit.mean()) +
+                plotnine.xlab("Cosine Similarity")
+            )
+
+        # Join grouping to model fit
+        df: pd.DataFrame = pd.concat([self.model_fit, group], axis=1)
+        df.columns = ["model_fit", "group"]
+        # Warn if any samples dropped
+        # Warn if any sample in grouping not in model fit
+        return (
+            plotnine.ggplot(df, mapping=plotnine.aes(
+                x="group", y="model_fit")) +
+            plotnine.geom_boxplot() +
+            plotnine.ylab("Cosine Similarity")
+        )
+
+    def __getattr__(self, item) -> Any:
         """Allow access to parameter attributes through this class as a
         convenience."""
         # Get parameter attributes
