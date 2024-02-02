@@ -183,7 +183,7 @@ def test_results_to_table():
 
 def test_plot_rank_selection(tmp_path: pathlib.Path):
     matplotlib.pyplot.switch_backend("Agg")
-    df: pd.DataFrame = models.example_abundance()  # .iloc[:50, :20]
+    df: pd.DataFrame = models.example_abundance().iloc[:50, :20]
     shuffles: List[BicvSplit] = BicvSplit.from_matrix(
         df=df, n=3, random_state=4298)
 
@@ -211,16 +211,41 @@ def test_decompose():
 
 
 def test_decompositions():
-    x: pd.DataFrame = models.example_abundance().iloc[:50, :50]
+    x: pd.DataFrame = models.five_es_x()
     res = decompositions(
         x=x,
-        random_starts=3,
-        ranks=[3,4],
-        top_n=2
+        random_starts=1,
+        ranks=[3, 4, 5],
+        top_n=1
     )
     p = res[3][0].plot_modelfit()
     a = pd.Series(random.choices(["a", "b"], k=len(res[3][0].model_fit)))
     a.index = res[3][0].model_fit.index
-    p = res[3][0].plot_modelfit(a)
+    p = res[5][0].plot_modelfit(a)
+    p.save("/Users/pez23lof/test.png")
     foo = "bar"
 
+
+def test_scaled():
+    x: pd.DataFrame = models.example_abundance().iloc[:50, :50]
+    res = decompose(NMFParameters(
+        x=x,
+        rank=3
+    ))
+    res.scaled('h', by='sample')
+
+
+def test_primary_signature():
+    matplotlib.pyplot.switch_backend("Agg")
+    x: pd.DataFrame = pd.read_csv("/Users/pez23lof/Documents/cellgen/gut_cell_atlas/gca_cell_tables/count.tsv", sep="\t", index_col=0)
+    res = decompose(NMFParameters(
+        x=x,
+        rank=5
+    ))
+    # _ = res.primary_signature
+    # _ = res.representative_signatures()
+    # _ = res.monodominant_samples()
+    grp = np.random.choice(['a', 'b'], size=x.shape[1])
+    plot = res.plot_relative_weight(group=grp)
+    # plot = res.plot_pcoa()
+    plot.save("/Users/pez23lof/test.png", height=8, width=8)

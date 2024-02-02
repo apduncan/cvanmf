@@ -20,6 +20,7 @@ import hashlib
 import inspect
 import itertools
 import logging
+import math
 import os
 import pathlib
 import re
@@ -30,8 +31,11 @@ from typing import (Optional, NamedTuple, List, Iterable, Union, Tuple, Set,
 import click
 import numpy as np
 import pandas as pd
+import patchworklib as pw
 import plotnine
 import sklearn
+from scipy.spatial.distance import pdist, squareform
+from sklearn import manifold
 from sklearn.decomposition import NMF, non_negative_factorization
 from sklearn.decomposition._nmf import _beta_divergence
 from sklearn.metrics.pairwise import cosine_similarity
@@ -399,9 +403,9 @@ class BicvSplit:
             while col < 3:
                 done += 1
                 all_sub_matrices[done - 1] = df.iloc[
-                         thresholds_feat[row]:thresholds_feat[row + 1],
-                         thresholds_sample[col]: thresholds_sample[col + 1]
-                         ]
+                                             thresholds_feat[row]:thresholds_feat[row + 1],
+                                             thresholds_sample[col]: thresholds_sample[col + 1]
+                                             ]
                 col += 1
             row += 1
             col = 0
@@ -1222,7 +1226,7 @@ def decompositions(
         random_starts = 1
 
     # Check the top_criteria is a valid property
-    if not top_criteria in  Decomposition.TOP_CRITERIA:
+    if not top_criteria in Decomposition.TOP_CRITERIA:
         raise ValueError(
             f"Invalid value for top_criteria: {top_criteria}. "
             f"Must be one of {set(Decomposition.TOP_CRITERIA.keys())}"
@@ -1283,17 +1287,20 @@ def decompose(params: NMFParameters) -> Decomposition:
     )
 
     # Get decomposition arrays
-    W: np.ndarray = model.fit_transform(params.x)
-    H: np.ndarray = model.components_
+    # Naming in line with NMF literature: H is transformed data, W feature
+    # weights
+    X_t: pd.DataFrame = params.x.T
+    H: np.ndarray = model.fit_transform(X_t)
+    W: np.ndarray = model.components_
 
     # Make names for the signatures
-    signature_names: List[str] = [f'S{i}' for i in range(1, params.rank+1)]
+    signature_names: List[str] = [f'S{i}' for i in range(1, params.rank + 1)]
 
     # Convert back to dataframes
-    W_df: pd.DataFrame = pd.DataFrame(W,
+    W_df: pd.DataFrame = pd.DataFrame(W.T,
                                       index=params.x.index,
                                       columns=signature_names)
-    H_df: pd.DataFrame = pd.DataFrame(H,
+    H_df: pd.DataFrame = pd.DataFrame(H.T,
                                       index=signature_names,
                                       columns=params.x.columns)
 
@@ -1307,16 +1314,18 @@ def decompose(params: NMFParameters) -> Decomposition:
 class Decomposition:
     """Decomposition of a matrix.
 
-    This class can be saved and restored from disk in two methods: either
-    pickling which limits save and load to python, or to text format to
-    facilitate easier analysis in other environments such as R. By default
-    the input matrix is also saved; this makes loading convenient, but is
-    space inefficient, and can lead to copies of large matrices in memory
-    when loading. Instead, you can choose to save without the input matrix,
-    in which case you wil need to provide the input matrix when estoring
-    results. When saving without the matrix, a hash is saved and matched
-    against the provided matrix when loading, and a warning issued on hash
-    mismatch."""
+    Note that we use the naming conventions and orientation common in NMF
+    literature:
+    * X is the input matrix, with m features on rows, and n samples on columns.
+    * H is the transformed data, with k signatures on rows, and n samples on
+        columns.
+    * W is the feature weight matrix, with m features on rows, and m
+        features on columns.
+    The scikit-learn implementation has these transposed; this package
+    handles transposing back and forth internally, and expects input in the
+    features x samples orientation, and provides W and H inline with the
+    literature rather than scikit-learn.
+    """
 
     TOP_CRITERIA: Dict[str, bool] = dict(
         cosine_similarity=True,
@@ -1325,6 +1334,19 @@ class Decomposition:
         l2_norm=False,
         beta_divergence=False
     )
+    DEFAULT_SCALES: List[List[str]] = [
+        # Used by preference, Bang Wong's 7 distinct colours for colour
+        # blindness, https://www.nature.com/articles/nmeth.1618 via
+        # https://davidmathlogic.com/colorblind
+        ['#E69F00', '#56B4E9', '#009E73', '#F0E442', '#0072B2',
+         '#D55E00', '#CC79A7' '#000000'],
+        # Sarah Trubetskoy's 20 distinct colours
+        # https://sashamaps.net/docs/resources/20-colors/
+        ['#e6194B', '#3cb44b', '#ffe119', '#4363d8', '#f58231', '#911eb4',
+         '#42d4f4', '#f032e6', '#bfef45', '#fabed4', '#469990', '#dcbeff',
+         '#9A6324', '#fffac8', '#800000', '#aaffc3', '#808000', '#ffd8b1',
+         '#000075', '#a9a9a9']
+    ]
     """Defines which criteria are available to select the best decomposition
     based on, and whether to take high values (True) or low values (False)."""
 
@@ -1336,6 +1358,7 @@ class Decomposition:
         self.__w: pd.DataFrame = w
         self.__params: NMFParameters = parameters
         self.__input_hash: Optional[int] = None
+        self.__colors: List[str] = self.__default_colors(n=parameters.rank)
 
     @property
     def h(self) -> pd.DataFrame:
@@ -1343,7 +1366,7 @@ class Decomposition:
 
     @property
     def w(self) -> pd.DataFrame:
-        return  self.__w
+        return self.__w
 
     @property
     def parameters(self) -> NMFParameters:
@@ -1395,8 +1418,8 @@ class Decomposition:
         cosine similarity between X_i and (WH)_i."""
         cos_sim: pd.Series = pd.Series(
             np.diag(cosine_similarity(
-                self.wh, self.parameters.x.T)),
-            index=self.wh.index,
+                self.wh.T, self.parameters.x.T)),
+            index=self.wh.columns,
             name="model_fit"
         )
         return cos_sim
@@ -1415,12 +1438,182 @@ class Decomposition:
                 16)
         return self.__input_hash
 
+    @property
+    def names(self) -> List[str]:
+        """Names for each of the k signatures."""
+        return list(self.h.index)
+
+    @names.setter
+    def names(self, names: Iterable[str]) -> None:
+        """Set names for each of the k signatures. Renames the H and W
+        matrices."""
+        n_lst: List[str] = list(names)
+        if len(n_lst) != self.h.shape[0]:
+            raise ValueError(
+                (f"Names given must match number of signatures. Given "
+                 f"{len(n_lst)} ({n_lst}), expected {self.h.shape[0]}")
+            )
+        self.h.index = n_lst
+        self.w.columns = n_lst
+
+    @property
+    def primary_signature(self) -> pd.Series:
+        """Signature with the highest weight for each sample.
+
+        The primary signature for a sample is the one with the highest weight
+        in the H matrix. In the unusual case where all signatures have 0
+        weight for a sample, this will return NaN, and is likely a sign of
+        a poor model."""
+        # Replace 0s with NA, as cannot have a max when picking between 0s
+        return self.h.replace(0, np.nan).idxmax()
+
+    @property
+    def colors(self) -> List[str]:
+        """Color which represents each signature in plots."""
+        return self.__colors
+
+    @colors.setter
+    def colors(self,
+               colors: Union[Dict[str, str], Iterable[str]]) -> None:
+        """Set colors to represent each signatures in plots.
+
+        Can either set all colors at once, or set individual colors using a
+        signature: color dictionary."""
+        if isinstance(colors, dict):
+            for signature, color in colors.items():
+                try:
+                    sig_idx: int = self.names.index(signature)
+                    self.colors[sig_idx] = color
+                except IndexError as e:
+                    logging.info("Unable to set color for %s, signature"
+                                 "not found", signature)
+        else:
+            color_list: List[str] = list(colors)
+            if len(color_list) < self.parameters.rank:
+                logging.info("Fewer colors than signature provided. Given %s, "
+                             "expected %s", len(color_list),
+                             self.parameters.rank)
+                self.colors[:len(color_list)] = color_list
+            elif len(color_list) > self.parameters.rank:
+                logging.info("More colors than signatures provided. Given %s, "
+                             "expected %s", len(color_list),
+                             self.parameters.rank)
+                self.colors = color_list[:self.parameters.rank]
+            else:
+                self.colors = color_list
+
+    def representative_signatures(self, threshold: float=0.9) -> pd.DataFrame:
+        """Which signatures describe a sample.
+
+        Identify which signatures contribute to describing a samples.
+        Represenative signatures are those for which the cumulative sum is
+        equal to or lower than the threshold value.
+
+        This is done by considering each sample in the sample scaled H matrix,
+        and taking a cumulative sum of weights in descending order. Any
+        signature for which the cumulative sum is less than or equal to the
+        threshold is considered representative.
+
+        :param threshold: Cumulative sum below which samples are considered
+            representative.
+        :return: Boolean dataframe indicating whether a signature is
+            representative for a given sample.
+        """
+        return (
+            self.scaled('h')
+            .apply(Decomposition.__representative_signatures,
+                   threshold=threshold)
+        )
+
+    def monodominant_samples(self,
+                             threshold: float=0.9
+                             ) -> pd.DataFrame:
+        """Which samples have a monodominant signature.
+
+        A monodominant signature is one which represents at least the
+        threshold amount of the weight in the scaled h matrix.
+
+        :param threshold: Proportion of the scaled H matrix weight to consider
+            a signature dominnant.
+        :return: Dataframe with column is_monodominant indicating if a
+            sample has a monodominant signature, and signature_name indicating
+            the name of the signature, or none if not."""
+        mono_df: pd.DataFrame = pd.concat([
+            self.scaled('h').max() >= threshold,
+            self.h.idxmax()
+            ],
+            axis=1
+        )
+        mono_df.columns = ['is_monodominant', 'signature_name']
+        # Replace non-monodominants signature with nan
+        mono_df.loc[~mono_df['is_monodominant'], 'signature_name'] = np.nan
+        return mono_df
+
+    def scaled(self,
+                   matrix: Union[pd.DataFrame, str],
+                   by: str = "sample"
+                   ) -> pd.DataFrame:
+        """Total sum scaled version of a matrix.
+
+        Scale a matrix to a proportion of the feature/sample total, or
+        to a proportion of the signature total.
+
+        :param matrix: Matrix to be scaled, one of H or W, or a string
+            {'h', 'w'}.
+        :param by: Scale to proportion of sample, feature, or signature
+            total.
+        :return: Scaled version of matrix.
+        """
+
+        is_h: bool
+        if isinstance(matrix, str):
+            if matrix.lower() not in {'h', 'w'}:
+                raise ValueError(
+                    f"matrix must be one of 'h' or 'w'; given {matrix}"
+                )
+            is_h = matrix == "h"
+            matrix = self.h if is_h else self.w
+        # We're going to trust that we're being passed a matrix from this
+        # decomposition, and just use shape to determine which it is
+        elif matrix.shape == self.h.shape or matrix.shape == self.w.shape:
+            is_h = matrix.shape == self.h
+            matrix = self.h if is_h else self.w
+        else:
+            raise ValueError(
+                "Matrix dimensions do not match either W or H when scaling")
+
+        # Warn if attempting to normalise H by feature, or W by sample
+        if by.lower() not in {'feature', 'sample', 'signature'}:
+            raise ValueError(
+                f"by must be one of 'feature', 'sample', or 'signature'; "
+                f"given {by}"
+            )
+        if is_h and by == "feature":
+            logging.warning("H matrix is sample matrix (signatures x samples), "
+                            "cannot scale by feature. Scaling by sample "
+                            "instead")
+            by = "sample"
+        if not is_h and by == "sample":
+            logging.warning("W matrix is feature matrix (features x "
+                            "signatures), cannot scale by feature. Scaling by "
+                            "feature instead")
+            by = "feature"
+
+        # Perform scaling
+        by_sig: bool = by == "signature"
+        transpose: bool = (is_h and by_sig) or (not is_h and not by_sig)
+        # Transpose so axis to summed is on columns
+        matrix = matrix.T if transpose else matrix
+        scaled: pd.DataFrame = matrix / matrix.sum()
+        return scaled.T if transpose else scaled
+
+
     def plot_modelfit(self,
                       group: Optional[pd.Series] = None
                       ) -> plotnine.ggplot:
         """Plot model fit distribution.
 
-        This provides a histogram of the model fit of samples by defaultt. If
+        This provides a histogram of the model fit of samples by default. If
         a grouping is provide, this will instead produce boxplots with each
         box being the distribution within a group.
 
@@ -1433,15 +1626,15 @@ class Decomposition:
         # No grouping means histogram
         if group is None:
             return (
-                plotnine.ggplot(
-                    self.model_fit.to_frame(name="model_fit"),
-                    mapping=plotnine.aes(
-                        x="model_fit"
-                    )
-                ) +
-                plotnine.geom_histogram() +
-                plotnine.geom_vline(xintercept=self.model_fit.mean()) +
-                plotnine.xlab("Cosine Similarity")
+                    plotnine.ggplot(
+                        self.model_fit.to_frame(name="model_fit"),
+                        mapping=plotnine.aes(
+                            x="model_fit"
+                        )
+                    ) +
+                    plotnine.geom_histogram() +
+                    plotnine.geom_vline(xintercept=self.model_fit.mean()) +
+                    plotnine.xlab("Cosine Similarity")
             )
 
         # Join grouping to model fit
@@ -1450,11 +1643,140 @@ class Decomposition:
         # Warn if any samples dropped
         # Warn if any sample in grouping not in model fit
         return (
-            plotnine.ggplot(df, mapping=plotnine.aes(
-                x="group", y="model_fit")) +
-            plotnine.geom_boxplot() +
-            plotnine.ylab("Cosine Similarity")
+                plotnine.ggplot(df, mapping=plotnine.aes(
+                    x="group", y="model_fit")) +
+                plotnine.geom_boxplot() +
+                plotnine.ylab("Cosine Similarity")
         )
+
+    def plot_relative_weight(self,
+                             group: Optional[Union[pd.Series, Iterable]] = None,
+                             group_sort: bool = True
+                             ) -> plotnine.ggplot:
+        """Plot relative weight of each signature in each sample."""
+
+        rel_df: pd.DataFrame = (
+            self.scaled('h')
+            .T
+            .stack()
+            .to_frame("weight")
+            .reset_index(names=["sample", "signature"])
+        )
+        plt: plotnine.ggplot = (
+            plotnine.ggplot(
+                rel_df,
+                plotnine.aes(x="sample", y="weight", fill="signature")
+            ) +
+            plotnine.geom_col(
+                position="stack",
+                stat="identity"
+            ) +
+            plotnine.xlab("Sample") +
+            plotnine.ylab("Relative Weight") +
+            plotnine.scale_fill_manual(self.colors,
+                                         name="Signature") +
+            plotnine.theme(axis_text_x=plotnine.element_text(angle=90))
+        )
+
+        # Display categorical grouping as geom_tile - similar to the ribbon in
+        # seaborn. Make as a separate figure and put together with patchworklib
+        if group is not None:
+            if not isinstance(group, pd.Series):
+                group = pd.Series(group, index=self.h.columns)
+            group_df: pd.DataFrame = (
+                group
+                .to_frame("group")
+                .reset_index(names=["sample"])
+            )
+            ordered_scale: plotnine.scale_x_discrete = (
+                plotnine.scale_x_discrete(limits=group.index.tolist())
+            )
+            plt_ribbon: plotnine.ggplot = (
+                plotnine.ggplot(group_df,
+                                mapping=plotnine.aes(
+                                    x="sample",
+                                    fill="group"
+                                )) +
+                plotnine.geom_col(
+                    mapping=plotnine.aes(y=1.0),
+                    width=1.0
+                ) +
+                plotnine.scale_fill_discrete(name="Group") +
+                ordered_scale +
+                plotnine.xlab("") +
+                plotnine.ylab("") +
+                plotnine.theme(axis_text_x=plotnine.element_text(angle=90),
+                               axis_text_y=plotnine.element_blank(),
+                               axis_ticks_minor_x=plotnine.element_blank(),
+                               axis_ticks_minor_y=plotnine.element_blank()
+                               )
+            )
+            # Remove the x-axis text from the fit plot
+            plt = (
+                    plt +
+                    plotnine.theme(
+                        axis_text_x=plotnine.element_blank(),
+                        axis_ticks_major_x=plotnine.element_blank(),
+                        axis_ticks_minor_x=plotnine.element_blank(),
+                        axis_title_x=plotnine.element_blank()
+                    ) +
+                    ordered_scale
+            )
+            pw_fit = pw.load_ggplot(plt, figsize=(6, 4))
+            pw_cat = pw.load_ggplot(plt_ribbon, figsize=(6, .2))
+            plt = pw.vstack(pw_cat, pw_fit,
+                            adjust_height=False,
+                            direction="t",
+                            margin="none")
+        return plt
+
+    def plot_pcoa(self, **kwargs):
+        """Ordination of samples.
+
+        Perform PCoA of samples based on Bray-Curtis dissimilarity. Bray-Curtis
+        dissimilarities are square-root transformed, then Wisconsin double
+        standardised (similar to treatment in R `cmdscale`)
+
+        :return: Scatter plot of samples coloured by primary signature"""
+        logging.info("Wisconsin double standardising data")
+        std_h: pd.DataFrame = self.scaled('h')
+        # Species maximum standardisation - each species max is 1
+        std_h = (std_h.T / std_h.max(axis=1)).T
+        # Sample total standardisation
+        std_h = std_h / std_h.sum()
+
+        logging.info("Calculating Bray-Curtis dissimilarity")
+        dist: np.ndarray = squareform(pdist(std_h.T, metric="braycurtis"))
+        logging.info("Square root transforming dissimilarities")
+        dist = np.sqrt(dist)
+
+        nmds = manifold.MDS(
+            dissimilarity='precomputed',
+            metric=True,
+            **kwargs
+        )
+        pos: np.ndarray = nmds.fit_transform(dist)
+        pos_df: pd.DataFrame = pd.DataFrame(
+            pos,
+            columns=[f'MDS{i}' for i in range(1, pos.shape[1]+1)],
+            index=self.h.columns
+        )
+        pos_df['primary'] = self.primary_signature
+        plt: plotnine.ggplot = (
+                plotnine.ggplot(
+                    pos_df,
+                    plotnine.aes(x="MDS1", y="MDS2", color="primary")
+                ) +
+                plotnine.geom_point() +
+                plotnine.scale_color_manual(values=self.colors,
+                                            name="Primary Signature")
+        )
+        return plt
+
+    # def to_csv(self,
+    #            dir: pathlib.Path,
+    #            prefix: Optional[str] = None,
+    #            ):
 
     def __getattr__(self, item) -> Any:
         """Allow access to parameter attributes through this class as a
@@ -1467,3 +1789,44 @@ class Decomposition:
     def __repr__(self) -> str:
         return (f'Decomposition[rank={self.rank}, '
                 f'beta_divergence={self.beta_divergence:.3g}]')
+
+    @staticmethod
+    def __representative_signatures(sig: pd.Series,
+                                    threshold: float) -> pd.Series:
+        """Determine which signatures in a series are representative."""
+        sorted_greater: pd.Series = (
+            sig.sort_values(ascending=False)
+            .cumsum() >= threshold)
+        # Determine first index hitting threshold
+        first_true: int = 0 if all(sig.isna()) else (next(
+            i for i, x in enumerate(sorted_greater.items()) if x[1]) + 1)
+        representatives: Set[str] = set(sorted_greater.index[0:first_true])
+        return pd.Series(
+            sig.index.isin(representatives),
+            index=sig.index
+        )
+
+    @staticmethod
+    def __default_colors(n: int) -> List[str]:
+        """Set default colors for signatures.
+
+        By default, Bang Wong's 7 color palette of colorblind distinct colors
+        is used (https://www.nature.com/articles/nmeth.1618,
+        https://davidmathlogic.com/colorblind). Where more than 7 signatures are
+        desired, Sasha Trubetskoy's 20 distinct colours are used
+        (https://sashamaps.net/docs/resources/20-colors/) and duplicate with
+        warning when there are too many signatures."""
+        pal_len: List[int] = [len(x) for x in Decomposition.DEFAULT_SCALES]
+        if n <= max(pal_len):
+            return next(x for x in Decomposition.DEFAULT_SCALES
+                        if n <= len(x))[:n]
+        else:
+            logging.warning("Some colours are duplicated when plotting over 20 "
+                            "signatures")
+            return (
+                    Decomposition.DEFAULT_SCALES[-1] *
+                    math.ceil(n / len(Decomposition.DEFAULT_SCALES))[:n]
+            )
+
+
+
