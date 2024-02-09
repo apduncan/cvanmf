@@ -14,6 +14,26 @@ from enterosig import models
 from enterosig.denovo import BicvSplit, BicvFold, bicv, _cosine_similarity, rank_selection, BicvResult, \
     plot_rank_selection, decompose, NMFParameters, decompositions
 
+@pytest.fixture
+def small_overlap_blocks():
+    """Small overlapping block diagonal matrix with k=4, for use in testing
+    de-novo methods."""
+
+    # Matrix dimensions
+    i, j = 100, 100
+    # Rank of matrix (number of blocks)
+    k: int = 3
+    # Width of blocks without overlap
+    base_h, tail_h = divmod(i, k)
+    base_w, tail_w = divmod(j, k)
+    # Make a randomly filled matrix, multiply by mask matrix which has 0 or 1
+    # then apply noise (so 0s also have some noise)
+    mask: np.ndarray = np.zeros(shape=(i, j))
+    for ki in range(k):
+        h: int = base_h + tail_h if k == ki else base_h
+
+def test_small_data(small_overlap_blocks):
+    print("i")
 
 def test_bicv_split():
     """Shuffling and splitting working as intended?"""
