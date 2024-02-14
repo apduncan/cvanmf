@@ -31,7 +31,7 @@ from typing import (Optional, NamedTuple, List, Iterable, Union, Tuple, Set,
 import click
 import numpy as np
 import pandas as pd
-import patchworklib as pw
+# import patchworklib as pw
 import plotnine
 import sklearn
 from scipy.spatial.distance import pdist, squareform
@@ -344,7 +344,7 @@ class BicvSplit:
             logging.info("Reindexing all loaded shuffles")
             for i, x in shuffles:
                 x.i = i
-        return shuffles
+        return sorted(shuffles, key=lambda x: x.i)
 
     @staticmethod
     def from_matrix(
@@ -1189,7 +1189,7 @@ def decompositions(
     :param top_n: Number of decompositions to be return for each rank.
     :param top_criteria: Criteria to use when determining which are the top
         decompositions. Can be one of beta_divergence, rss, r_squared,
-        cosine_similairty, or l2_norm.`
+        cosine_similairty, or l2_norm.
     :param seed: Seed or random generator used
     :param alpha: Regularisation parameter approach to both H and W matrices.
     :param l1_ratio: Regularisation mixing parameter. In range 0.0 <= l1_ratio
@@ -1374,8 +1374,8 @@ class Decomposition:
 
     @property
     def cosine_similarity(self) -> float:
-        return _cosine_similarity(self.parameters.x.values,
-                                  self.w.dot(self.h).values)
+        return float(_cosine_similarity(self.parameters.x.values,
+                                        self.w.dot(self.h).values))
 
     @property
     def r_squared(self) -> float:
