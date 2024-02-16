@@ -977,15 +977,14 @@ def _sparsity(x: np.ndarray) -> float:
               default="\t",
               help="""Delimiter to use for input and output tables. Defaults
               to tab.""")
-@click.option("-i",
-              "--shuffles",
+@click.option("--shuffles",
               required=False,
               type=int,
               default=100,
               show_default=True,
               help="""Number of times to shuffle input matrix. Bi-cross 
               validation is run once on each shuffle, for each rank.""")
-@click.option("--progres/--no-progress",
+@click.option("--progress/--no-progress",
               default=True,
               show_default=True,
               help="""Display progress bar showing number of bi-cross 
@@ -1023,6 +1022,12 @@ def _sparsity(x: np.ndarray) -> float:
               help="""Regularisation mixing parameter. In range 0.0 <= l1_ratio 
               <= 1.0. This controls the mix between sparsifying and densifying
               regularisation. 1.0 will encourage sparsity, 0.0 density.""")
+@click.option("--alpha",
+              required=False,
+              type=float,
+              default=0.0,
+              show_default=True,
+              help="""Multiplier for regularisation terms.""")
 @click.option("--max_iter",
               required=False,
               type=int,

@@ -5,6 +5,7 @@ import pathlib
 import random
 from typing import List, Dict
 
+from click.testing import CliRunner
 import matplotlib.pyplot
 import numpy as np
 import pandas as pd
@@ -12,8 +13,9 @@ import plotnine
 import pytest
 
 from enterosig import models
-from enterosig.denovo import BicvSplit, BicvFold, bicv, _cosine_similarity, rank_selection, BicvResult, \
-    plot_rank_selection, decompose, NMFParameters, decompositions, Decomposition
+from enterosig.denovo import BicvSplit, BicvFold, bicv, _cosine_similarity, \
+    rank_selection, BicvResult, plot_rank_selection, decompose, NMFParameters, \
+        decompositions, Decomposition, cli_rank_selection
 
 @pytest.fixture
 def small_overlap_blocks(scope="session") -> pd.DataFrame:
@@ -127,7 +129,7 @@ def small_decompositions_deterministic(
         random_starts=5,
         ranks=[3, 4, 5],
         top_n=3,
-        init="nndsvd",
+        init="nndsvda",
         top_criteria="cosine_similarity"
     )
     return res
@@ -372,11 +374,11 @@ def test_decompose(small_decomposition):
     assert all([
         d.w.shape == tuple(reversed(d.h.shape)),
         d.wh.shape == (d.w.shape[0], d.h.shape[1]),
-        d.model_fit.size == d.w.shape[0],
-        len(d.colors) == d.w.shape[1],
-        d.monodominant_samples().shape[0] == d.w.shape[0],
-        d.primary_signature.shape[0] == d.w.shape[0],
-        d.representative_signatures().shape[0] == d.w.shape[0]
+        d.model_fit.size == d.h.shape[1],
+        len(d.colors) == d.h.shape[0],
+        d.monodominant_samples().shape[0] == d.h.shape[1],
+        d.primary_signature.shape[0] == d.h.shape[1],
+        d.representative_signatures().shape == d.h.shape
         ]), \
         "Series, matrices and colors do not have matching shapes"
 
@@ -446,22 +448,72 @@ def test_scaled(
     h = small_decomposition.scaled('h')
     assert np.allclose(h.sum(), 1.0), \
         "Default H scaling does not have sample sum of 1."
-    
-    
+    # Feature scaling H should default to sample scaling
+    h_feat = small_decomposition.scaled('h', by='feature')
+    assert np.allclose(h_feat, h), \
+        "Feature scaling H did not default to sample scaling."
+    # Signature scaling
+    h_sig = small_decomposition.scaled('h', by='signature')
+    assert np.allclose(h_sig.sum(axis=1), 1.0), \
+        "Signature scaling H did not have signature sum of 1"
+
+    w: pd.DataFrame = small_decomposition.scaled('w', by='feature')
+    assert np.allclose(w.sum(axis=1), 1.0), \
+        "Feature-scaled W does not sum to 1."
+    # Should feature scale by default
+    w = small_decomposition.scaled('w')
+    assert np.allclose(w.sum(axis=1), 1.0), \
+        "Default W scaling does not have feature sum of 1."
+    # Sample scaling W should default to feature scaling
+    w_feat = small_decomposition.scaled('w', by='sample')
+    assert np.allclose(w_feat, w), \
+        "Sample scaling W did not default to sample scaling."
+    # Signature scaling
+    w_sig = small_decomposition.scaled('w', by='signature')
+    assert np.allclose(w_sig.sum(), 1.0), \
+        "Signature scaling H did not have signature sum of 1"
+
+    # Invalid values for by should error
+    with pytest.raises(ValueError):
+        # This is how I end up typing signature about half the time
+        h_null = small_decomposition.scaled('h', by='sginatntuer')
+    # Non H or W matrix should error
+    with pytest.raises(ValueError):
+        h_null = small_decomposition.scaled(
+            pd.DataFrame(np.random.uniform(size=(20, 7)))
+        )
 
 
+def test_cli_rank_selection(
+    small_overlap_blocks: pd.DataFrame,
+    tmp_path: pathlib.Path
+    ):
+    """Run the CLI command for rank selection."""
+    # Write our block data to the temp path
+    small_overlap_blocks.to_csv(tmp_path / "input.tsv", sep="\t")
+    runner: CliRunner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=tmp_path) as td:
+        result = runner.invoke(cli_rank_selection,
+            [
+                "--input", tmp_path / "input.tsv",
+                "-o", td,
+                "-d", "\t",
+                "--shuffles", "5",
+                "--no-progress",
+                "--seed", "4928",
+                "-l", "3",
+                "-u", "5",
+                "--log_debug"
+            ]
+        )
+    assert result.exit_code == 0, \
+        "CLI rank selection did had non-zero exit code"
+    td_path: pathlib.Path = pathlib.Path(td)
+    for expected_file in ['rank_selection.tsv', 'rank_selection.pdf']:
+        assert (td_path / expected_file).is_file(), \
+            f"{expected_file} not created"
 
-def test_primary_signature():
-    matplotlib.pyplot.switch_backend("Agg")
-    x: pd.DataFrame = pd.read_csv("/Users/pez23lof/Documents/cellgen/gut_cell_atlas/gca_cell_tables/count.tsv", sep="\t", index_col=0)
-    res = decompose(NMFParameters(
-        x=x,
-        rank=5
-    ))
-    # _ = res.primary_signature
-    # _ = res.representative_signatures()
-    # _ = res.monodominant_samples()
-    grp = np.random.choice(['a', 'b'], size=x.shape[1])
-    plot = res.plot_relative_weight(group=grp)
-    # plot = res.plot_pcoa()
-    plot.save("/Users/pez23lof/test.png", height=8, width=8)
+
+# TODO: Tests for plotting functions.
+# Leaving for now as might rewrite to use a different plotting method, 
+# patchworklib seems not to play so nicely with 3.12
