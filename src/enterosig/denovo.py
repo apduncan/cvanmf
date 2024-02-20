@@ -470,6 +470,24 @@ class NMFParameters(NamedTuple):
     """Initialisation method for H and W matrices on first step. Defaults to 
     non-negative SVD with small random values added."""
 
+    @property
+    def log_str(self) -> str:
+        """Format parameters in readable way for logs/console."""
+        data_str: str = (repr(self.x) if isinstance(self.x, BicvSplit) else
+                         f"DataFrame[{self.x.shape}]")
+        return (
+            f"Bi-cross validation parameters\n"
+            f"------------------------------\n"
+            f"Data:             {data_str}"
+            f"Seed:             {self.seed}\n"
+            f"Ranks:            {self.rank}\n"
+            f"L1 Ratio:         {self.l1_ratio}\n"
+            f"Alpha:            {self.alpha}\n"
+            f"Max Iterations:   {self.max_iter}\n"
+            f"Beta Loss:        {self.beta_loss}\n"
+            f"Initialisation:   {self.init}\n"
+            f"Keep Matrices:    {self.keep_mats}\n"
+        )
 
 class BicvResult(NamedTuple):
     """Results from a single bi-cross validation run. For each BicvSplit there
@@ -1777,11 +1795,6 @@ class Decomposition:
                                             name="Primary Signature")
         )
         return plt
-
-    # def to_csv(self,
-    #            dir: pathlib.Path,
-    #            prefix: Optional[str] = None,
-    #            ):
 
     def __getattr__(self, item) -> Any:
         """Allow access to parameter attributes through this class as a
