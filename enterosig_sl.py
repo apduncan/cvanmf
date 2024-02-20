@@ -136,7 +136,6 @@ if abd_file is not None:
         # raise an EnteroException
         # TODO(apduncan): Custom hashing to reduce time on large matrices?
         # TODO(apduncan): Allowing hard mapping to be provided
-        # TODO(apduncan): Family rollup as a toggle
         abd_tbl = pd.read_csv(abd_file, sep="\t", index_col=0)
         with expander_log:
             transformed: TransformResult = _transform_table(
@@ -146,6 +145,8 @@ if abd_file is not None:
         res_zip: io.BytesIO = _zip_items([
             ("w.tsv", transformed.w.to_csv(sep="\t")),
             ("h.tsv", transformed.h.to_csv(sep="\t")),
+            ("w_norm.tsv", transformed.w_norm.to_csv(sep="\t")),
+            ("h_norm.tsv", transformed.h_norm.to_csv(sep="\t")),
             ("abundance.tsv", transformed.abundance_table.to_csv(sep="\t")),
             ("model_fit.tsv", transformed.model_fit.to_csv(sep="\t")),
             ("taxon_mapping.tsv",
@@ -164,7 +165,7 @@ if abd_file is not None:
 
             st.markdown(text.WEIGHT_PLOT_TITLE)
             # Provide a simple visualisations of the ES
-            p_hmap: go.Figure = _plot_heatmap(transformed.h)
+            p_hmap: go.Figure = _plot_heatmap(transformed.h_norm)
             st.plotly_chart(
                 p_hmap
             )

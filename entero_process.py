@@ -138,6 +138,8 @@ class TransformResult(NamedTuple):
     abundance_table: pd.DataFrame
     model_fit: pd.DataFrame
     taxon_mapping: GenusMapping
+    w_norm: Optional[pd.DataFrame] = None
+    h_norm: Optional[pd.DataFrame] = None
 
 def _console_logger(message: Any) -> None:
     logging.info(message)
@@ -535,6 +537,18 @@ def nmf_transform(new_abd: pd.DataFrame,
     )
     return h_df
 
+def tss_scale(w: pd.DataFrame,
+              h: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Scale H and W to sum to 1. Scale W by signature, and H by sample.
+
+    :param w: W matrix
+    :param h: H matrix
+    :rtype: Tuple[pd.DataFrame, pd.DataFrame]
+    """
+    w_scale: pd.DataFrame = w / w.sum()
+    h_scale: pd.DataFrame = (h.T / h.sum(axis=1)).T
+    return w_scale, h_scale
+
 def transform_table(abd: pd.DataFrame,
                     family_rollup: bool,
                     model_w: pd.DataFrame,
@@ -550,8 +564,10 @@ def transform_table(abd: pd.DataFrame,
     )
     es = nmf_transform(new_abd=new_abd, new_w=new_w, logger=logger)
     mf = model_fit(w=new_w, h=es.T, x=new_abd)
+    w_tss, h_tss = tss_scale(new_w, es)
     return TransformResult(w=new_w, h=es, abundance_table=new_abd,
-                           model_fit=mf, taxon_mapping=mapping)
+                           model_fit=mf, taxon_mapping=mapping,
+                           w_norm=w_tss, h_norm=h_tss)
 
 def transform(abundance: Union[str, pd.DataFrame],
               model_w: Union[str, pd.DataFrame] = "5es",
@@ -559,7 +575,7 @@ def transform(abundance: Union[str, pd.DataFrame],
               rollup: bool = True,
               separator: str = "\t",
               output_dir: Optional[str] = None
-              ) -> None:
+              ) -> TransformResult:
     """Transform abundances to an existing Enterosignatures model. 
 
     :param abundance: Table of genus level abundances to transform. Can be a
@@ -633,7 +649,9 @@ def transform(abundance: Union[str, pd.DataFrame],
         res.w.to_csv(os.path.join(output_dir, "w.tsv"))
         res.h.to_csv(os.path.join(output_dir, "h.tsv"))
         res.abundance_table.to_csv(os.path.join(output_dir, "abundance.tsv"))
-        res.model_fit.to_csv(os.path.join(output_dir, "taxon_mapping.tsv")) 
+        res.model_fit.to_csv(os.path.join(output_dir, "taxon_mapping.tsv"))
+        res.w_norm.to_csv(os.path.join(output_dir, "w_norm.tsv"))
+        res.h_norm.to_csv(os.path.join(output_dir, "h_norm.tsv"))
     
     return res
 
@@ -715,9 +733,15 @@ def cli(abundance: str,
     res.h.to_csv(os.path.join(output_dir, "h.tsv"))
     res.abundance_table.to_csv(os.path.join(output_dir, "abundance.tsv"))
     res.model_fit.to_csv(os.path.join(output_dir, "taxon_mapping.tsv"))
+    res.h_norm.to_csv(os.path.join(output_dir, "h_norm.tsv"))
+    res.w_norm.to_csv(os.path.join(output_dir, "w_norm.tsv"))
 
 if __name__ == "__main__":
     try:
+        tss_scale(
+            pd.read_csv("test/w.tsv", index_col=0, sep=","),
+            pd.read_csv("test/h.tsv", index_col=0, sep=",")
+        )
         cli()
     except EnteroException as e:
         logging.error(f"Unable to transform: {e}")

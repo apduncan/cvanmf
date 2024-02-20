@@ -19,6 +19,15 @@ table, provided in this archive are the modified ones.
 The files contained are
 - w.tsv: 5 Enterosignature model W matrix modified to match input taxa
 - h.tsv: Enterosignature weights for each sample in input abundance table
+- w_norm.tsv: W matrix total-sum-scaled by signature, so the weights of each
+            signature sum to 1.
+            Note that using scaled version of the matrices means
+            w_norm x h_norm is no longer approximately equal to the input.
+- h_norm.tsv: H matrix total-sum-scaled by sample, so the weights of each
+            sample sum to 1. This can be interpreted as the relative abundance
+            of each ES in a sample.
+            Note that using scaled versions of the matrices means
+            w_norm x h_norm is no longer approximately equal to the input.
 - abundance.tsv: Input abundance matrix matched up to taxa in w.tsv
 - model_fit.tsv: Fit between values in each sample in abundance.tsv and the 
             product w x h. This is the cosine similarity between the two 
