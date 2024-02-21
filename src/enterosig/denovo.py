@@ -24,16 +24,19 @@ import math
 import os
 import pathlib
 import re
+import shutil
+import tarfile
 from functools import cached_property
 from typing import (Optional, NamedTuple, List, Iterable, Union, Tuple, Set,
                     Any, Dict, Callable)
 
 import click
+import matplotlib.figure
 import numpy as np
 import pandas as pd
-# import patchworklib as pw
+import patchworklib as pw
 import plotnine
-import sklearn
+import yaml
 from scipy.spatial.distance import pdist, squareform
 from sklearn import manifold
 from sklearn.decomposition import NMF, non_negative_factorization
@@ -100,7 +103,8 @@ class BicvSplit:
         # Some validations
         if len(mx) != 9:
             raise ValueError("Must provide 9 sub-matrices to BicvSplit")
-        self.__mx: List[List[pd.DataFrame]] = [mx[i:i + 3] for i in range(0, 9, 3)]
+        self.__mx: List[List[pd.DataFrame]] = [
+            mx[i:i + 3] for i in range(0, 9, 3)]
         self.__i: Optional[int] = i
 
     # TODO: Read up on how to implement slicing properly
@@ -403,9 +407,9 @@ class BicvSplit:
             while col < 3:
                 done += 1
                 all_sub_matrices[done - 1] = df.iloc[
-                                             thresholds_feat[row]:thresholds_feat[row + 1],
-                                             thresholds_sample[col]: thresholds_sample[col + 1]
-                                             ]
+                             thresholds_feat[row]:thresholds_feat[row + 1],
+                             thresholds_sample[col]: thresholds_sample[col + 1]
+                ]
                 col += 1
             row += 1
             col = 0
@@ -488,6 +492,35 @@ class NMFParameters(NamedTuple):
             f"Initialisation:   {self.init}\n"
             f"Keep Matrices:    {self.keep_mats}\n"
         )
+
+    def to_yaml(self,
+                path: pathlib.Path):
+        """Write parameters to a YAML file.
+
+        Save the parameters, except the input matrix, to a YAML file.
+
+        :param path: File to write to
+        """
+
+        # A little bit of work to coerce types. Numpy random generators
+        # provide a int32/int64, where manually set seed are python int
+        # whose type cannot be checked by np.issubdtype
+        seed: Union[int, str] = self.seed
+        if not isinstance(seed, int) or isinstance(seed, str):
+            # This is likely a numpy int type which we will cast to int
+            seed = int(seed)
+        with open(path, 'w') as f:
+            yaml.safe_dump(dict(
+                seed=seed,
+                rank=self.rank,
+                l1_ratio=self.l1_ratio,
+                alpha=self.alpha,
+                max_iter=self.max_iter,
+                beta_loss=self.beta_loss,
+                init=self.init,
+                keep_mats=self.keep_mats
+            ), f)
+
 
 class BicvResult(NamedTuple):
     """Results from a single bi-cross validation run. For each BicvSplit there
@@ -972,6 +1005,24 @@ def _sparsity(x: np.ndarray) -> float:
     return 1 - (np.count_nonzero(x) / x.size)
 
 
+def _write_symlink(path: pathlib.Path,
+                   target: Optional[pathlib.Path],
+                   save_fn: Callable[[pathlib.Path], None],
+                   symlink: bool) -> None:
+    linked: bool = False
+    if symlink and target is not None:
+        if target.is_file():
+            logging.debug("Attempting to symlink %s -> %s", path, target)
+            try:
+                path.symlink_to(target)
+                linked: bool = True
+            except Exception as e:
+                logging.debug("Failed to create symlink %s -> %s", path, target)
+    if not linked:
+        logging.debug("Writing to %s", target)
+        save_fn(path)
+
+
 @click.command()
 @click.option("-i",
               "--input",
@@ -1098,18 +1149,7 @@ def cli_rank_selection(
     documentation available there for many of the NMF specific parameters there.
     """
 
-    # Configure logger
-    log_level: int = logging.WARNING
-    match verbosity:
-        case "debug":
-            log_level = logging.DEBUG
-        case "info":
-            log_level = logging.INFO
-    logging.basicConfig(
-        format='%(levelname)s [%(asctime)s]: %(message)s',
-        datefmt='%d/%m/%Y %I:%M:%S',
-        level=log_level
-    )
+    __configure_logger(verbosity)
 
     # Validate parameters
     # Rank min / max in right order
@@ -1271,10 +1311,11 @@ def decompositions(
     # good use of multiple cores anyway. Multiprocessing just makes processes
     # compete for resources and is slower.
     res_map: Iterable = (
-        map(decompose, tqdm(params)) if progress_bar else map(bicv, params))
+        map(decompose, tqdm(params)) if progress_bar else
+        map(decompose, params))
     results: List[Decomposition] = sorted(
         list(res_map),
-        key=lambda x: x.parameters.rank
+        key=lambda y: y.parameters.rank
     )
 
     # Collect results from the ranks into lists, and place in a dictionary
@@ -1357,6 +1398,9 @@ class Decomposition:
         l2_norm=False,
         beta_divergence=False
     )
+    """Defines which criteria are available to select the best decomposition
+    based on, and whether to take high values (True) or low values (False)."""
+
     DEFAULT_SCALES: List[List[str]] = [
         # Used by preference, Bang Wong's 7 distinct colours for colour
         # blindness, https://www.nature.com/articles/nmeth.1618 via
@@ -1370,8 +1414,19 @@ class Decomposition:
          '#9A6324', '#fffac8', '#800000', '#aaffc3', '#808000', '#ffd8b1',
          '#000075', '#a9a9a9']
     ]
-    """Defines which criteria are available to select the best decomposition
-    based on, and whether to take high values (True) or low values (False)."""
+    """Default, color-blindness friendly colorscales for signatures in plots.
+    Used by preference is Bang Wong's 7 distinct colours for colour blindness
+    (https://www.nature.com/articles/nmeth.1618 via 
+    https://davidmathlogic.com/colorblind). For more signatures, Sasha
+    Trubetskoy's 20 distinct colours are used 
+    (https://sashamaps.net/docs/resources/20-colors/)
+    """
+
+    LOAD_FILES: List[str] = ['x.tsv', 'h.tsv', 'w.tsv', 'parameters.yaml',
+                             'properties.yaml']
+    """Defines the files while are loaded to recreate a decomposition object
+    from disk."""
+
 
     def __init__(self,
                  parameters: NMFParameters,
@@ -1491,6 +1546,23 @@ class Decomposition:
         return self.h.replace(0, np.nan).idxmax()
 
     @property
+    def quality_series(self) -> pd.Series:
+        """Quality measures (r_squared, cosine similarity etc) as series.
+
+        Each decomposition has a range of values describing it's properties and
+        approximation of the input data. This property is a series which
+        includes all of these properties."""
+        return pd.Series(dict(
+            cosine_similarity=self.cosine_similarity,
+            r_squared=self.r_squared,
+            rss=self.rss,
+            l2_norm=self.l2_norm,
+            sparsity_h=self.sparsity_h,
+            sparsity_w=self.sparsity_h,
+            beta_divergence=self.beta_divergence
+        ))
+
+    @property
     def colors(self) -> List[str]:
         """Color which represents each signature in plots."""
         return self.__colors
@@ -1521,11 +1593,11 @@ class Decomposition:
                 logging.info("More colors than signatures provided. Given %s, "
                              "expected %s", len(color_list),
                              self.parameters.rank)
-                self.colors = color_list[:self.parameters.rank]
+                self.__colors = color_list[:self.parameters.rank]
             else:
-                self.colors = color_list
+                self.__colors = color_list
 
-    def representative_signatures(self, threshold: float=0.9) -> pd.DataFrame:
+    def representative_signatures(self, threshold: float = 0.9) -> pd.DataFrame:
         """Which signatures describe a sample.
 
         Identify which signatures contribute to describing a samples.
@@ -1549,7 +1621,7 @@ class Decomposition:
         )
 
     def monodominant_samples(self,
-                             threshold: float=0.9
+                             threshold: float = 0.9
                              ) -> pd.DataFrame:
         """Which samples have a monodominant signature.
 
@@ -1564,7 +1636,7 @@ class Decomposition:
         mono_df: pd.DataFrame = pd.concat([
             self.scaled('h').max() >= threshold,
             self.h.idxmax()
-            ],
+        ],
             axis=1
         )
         mono_df.columns = ['is_monodominant', 'signature_name']
@@ -1573,9 +1645,9 @@ class Decomposition:
         return mono_df
 
     def scaled(self,
-                   matrix: Union[pd.DataFrame, str],
-                   by: str = "sample"
-                   ) -> pd.DataFrame:
+               matrix: Union[pd.DataFrame, str],
+               by: Optional[str] = None
+               ) -> pd.DataFrame:
         """Total sum scaled version of a matrix.
 
         Scale a matrix to a proportion of the feature/sample total, or
@@ -1605,6 +1677,10 @@ class Decomposition:
             raise ValueError(
                 "Matrix dimensions do not match either W or H when scaling")
 
+        if by is None:
+            by = "sample" if is_h else "signature"
+            logging.info("Using default scaling for matrix (by %s)",
+                         by)
         # Warn if attempting to normalise H by feature, or W by sample
         if by.lower() not in {'feature', 'sample', 'signature'}:
             raise ValueError(
@@ -1618,9 +1694,9 @@ class Decomposition:
             by = "sample"
         if not is_h and by == "sample":
             logging.warning("W matrix is feature matrix (features x "
-                            "signatures), cannot scale by feature. Scaling by "
-                            "feature instead")
-            by = "feature"
+                            "signatures), cannot scale by sample. Scaling by "
+                            "signature instead")
+            by = "signature"
 
         # Perform scaling
         by_sig: bool = by == "signature"
@@ -1629,7 +1705,6 @@ class Decomposition:
         matrix = matrix.T if transpose else matrix
         scaled: pd.DataFrame = matrix / matrix.sum()
         return scaled.T if transpose else scaled
-
 
     def plot_modelfit(self,
                       group: Optional[pd.Series] = None
@@ -1686,19 +1761,19 @@ class Decomposition:
             .reset_index(names=["sample", "signature"])
         )
         plt: plotnine.ggplot = (
-            plotnine.ggplot(
-                rel_df,
-                plotnine.aes(x="sample", y="weight", fill="signature")
-            ) +
-            plotnine.geom_col(
-                position="stack",
-                stat="identity"
-            ) +
-            plotnine.xlab("Sample") +
-            plotnine.ylab("Relative Weight") +
-            plotnine.scale_fill_manual(self.colors,
-                                         name="Signature") +
-            plotnine.theme(axis_text_x=plotnine.element_text(angle=90))
+                plotnine.ggplot(
+                    rel_df,
+                    plotnine.aes(x="sample", y="weight", fill="signature")
+                ) +
+                plotnine.geom_col(
+                    position="stack",
+                    stat="identity"
+                ) +
+                plotnine.xlab("Sample") +
+                plotnine.ylab("Relative Weight") +
+                plotnine.scale_fill_manual(self.colors,
+                                           name="Signature") +
+                plotnine.theme(axis_text_x=plotnine.element_text(angle=90))
         )
 
         # Display categorical grouping as geom_tile - similar to the ribbon in
@@ -1715,24 +1790,24 @@ class Decomposition:
                 plotnine.scale_x_discrete(limits=group.index.tolist())
             )
             plt_ribbon: plotnine.ggplot = (
-                plotnine.ggplot(group_df,
-                                mapping=plotnine.aes(
-                                    x="sample",
-                                    fill="group"
-                                )) +
-                plotnine.geom_col(
-                    mapping=plotnine.aes(y=1.0),
-                    width=1.0
-                ) +
-                plotnine.scale_fill_discrete(name="Group") +
-                ordered_scale +
-                plotnine.xlab("") +
-                plotnine.ylab("") +
-                plotnine.theme(axis_text_x=plotnine.element_text(angle=90),
-                               axis_text_y=plotnine.element_blank(),
-                               axis_ticks_minor_x=plotnine.element_blank(),
-                               axis_ticks_minor_y=plotnine.element_blank()
-                               )
+                    plotnine.ggplot(group_df,
+                                    mapping=plotnine.aes(
+                                        x="sample",
+                                        fill="group"
+                                    )) +
+                    plotnine.geom_col(
+                        mapping=plotnine.aes(y=1.0),
+                        width=1.0
+                    ) +
+                    plotnine.scale_fill_discrete(name="Group") +
+                    ordered_scale +
+                    plotnine.xlab("") +
+                    plotnine.ylab("") +
+                    plotnine.theme(axis_text_x=plotnine.element_text(angle=90),
+                                   axis_text_y=plotnine.element_blank(),
+                                   axis_ticks_minor_x=plotnine.element_blank(),
+                                   axis_ticks_minor_y=plotnine.element_blank()
+                                   )
             )
             # Remove the x-axis text from the fit plot
             plt = (
@@ -1781,7 +1856,7 @@ class Decomposition:
         pos: np.ndarray = nmds.fit_transform(dist)
         pos_df: pd.DataFrame = pd.DataFrame(
             pos,
-            columns=[f'MDS{i}' for i in range(1, pos.shape[1]+1)],
+            columns=[f'MDS{i}' for i in range(1, pos.shape[1] + 1)],
             index=self.h.columns
         )
         pos_df['primary'] = self.primary_signature
@@ -1795,6 +1870,312 @@ class Decomposition:
                                             name="Primary Signature")
         )
         return plt
+
+    def save(self,
+             out_dir: pathlib.Path,
+             compress: bool = False,
+             param_path: Optional[pathlib.Path] = None,
+             x_path: Optional[pathlib.Path] = None,
+             symlink: bool = True,
+             delim: str = "\t") -> None:
+        """Write decomposition to disk.
+
+        Export this decomposition and associated data. This is written to text
+        type files (tab separated for tables, yaml for dictionaries) to allow
+        simpler reading in other analysis environments such as R. Exceptions
+        are raised if any tables cannot be written, but plots are allowed to
+        fail though will produce log entries.
+
+        :param out_dir: Directory to write to. Must be empty.
+        :param compress: Create compressed .tar.gz rather than directory.
+        :param param_path: Path to YAML file containing parameters used. If not
+            given will create a copy in the directory. If given and symlink
+            is True, will try to make a symlink to parameters file.
+        :param x_path: Path to X matrix used. Behaves as param_path for copies/
+            symlinks.
+        :param symlink: Make symlinks ot param_path and x_path if possible.
+        :param delim: Delimiter to used for tabular output."""
+
+        logging.debug("Create decomposition output dir: %s", out_dir)
+        out_dir.mkdir(parents=True, exist_ok=False)
+
+        # Output tables
+        for tbl, fname in (
+                [(x, f'{x}.tsv') for x in
+                 ['h', 'w', 'model_fit', 'primary_signature',
+                  'quality_series']] +
+                [(self.representative_signatures(),
+                  'representative_signatures.tsv'),
+                 (self.monodominant_samples(), 'monodominant_samples.tsv'),
+                 (self.scaled('h'), "h_scaled.tsv"),
+                 (self.scaled('w'), "w_scaled.tsv")]
+        ):
+            logging.debug("Write decomposition table: %s", out_dir / fname)
+            df: Union[pd.Series, pd.DataFrame] = (
+                getattr(self, tbl) if isinstance(tbl, str) else tbl
+            )
+            df.to_csv(out_dir / fname, sep=delim)
+
+        # Output some YAML properties
+        with open(out_dir / "properties.yaml", "w") as f:
+            yaml.safe_dump(dict(
+                colors=self.colors,
+                names=self.names
+            ), f)
+
+        # Symlink or write data / parameters
+        _write_symlink(path=out_dir / "x.tsv",
+                       target=x_path,
+                       save_fn=lambda x: self.parameters.x.to_csv(
+                           x,
+                           sep=delim
+                       ),
+                       symlink=symlink)
+        _write_symlink(path=out_dir / "parameters.yaml",
+                       target=param_path,
+                       save_fn=self.parameters.to_yaml,
+                       symlink=symlink)
+
+        # Attempt to output default plots
+        for plot_fn in (x for x in dir(self) if "plot_" in x):
+            plt_path: pathlib.Path = out_dir / plot_fn
+            logging.debug("Write decomposition plot: %s", plt_path)
+            try:
+                plt_obj: Union[plotnine.ggplot, matplotlib.figure.Figure] = (
+                    getattr(self, plot_fn)()
+                )
+
+                if isinstance(plt_obj, plotnine.ggplot):
+                    plt_obj.save(plt_path.with_suffix(".pdf"))
+                else:
+                    plt_obj.savefig(plt_path)
+            except Exception as e:
+                # TODO: This is not a great pattern, refine exception catching
+                logging.warning("Failed to save plot %s (%s)",
+                                plt_path, str(e))
+
+        # Compress if requested
+        if compress:
+            with tarfile.open(
+                    out_dir.with_suffix(".tar.gz"),
+                    'w:gz') as tar:
+                for f in out_dir.iterdir():
+                    if f.is_file():
+                        tar.add(f, arcname=f.name)
+            shutil.rmtree(out_dir)
+
+    @staticmethod
+    def save_decompositions(decompositions:Dict[int, List[Decomposition]],
+                            output_dir: pathlib.Path,
+                            symlink: bool = True,
+                            delim: str = "\t",
+                            compress: bool = False) -> None:
+        """Save multiple decompositions to disk.
+
+        Write multiple decompositions to disk. The structure is that a
+        directory is created for each rank, then within that a directory for
+        each decomposition. By default the input data and parameters will be
+        saved at the top level, and symlinked to by each individual
+        decomposition.
+
+        The files output are tables for W and H matrices, scaled W and H,
+        tables basic analyses (primary es etc), and all default plots where
+        possible.
+
+        :param decompositions: Decompositions in form output by
+            :function:`decompositions`.
+        :param output_dir: Directory to write to which is either empty or
+            does not exist.
+        :param symlink: Symlink the parameters and input X files.
+        :param delim: Delimiter for tabular output.
+        :param compress: Compress each decomposition folder to .tar.gz
+        """
+        output_dir.mkdir(parents=True, exist_ok=True)
+        # Ensure this is empty
+        if len([x for x in output_dir.iterdir()
+                if x.name != "parameters.yaml"]) > 0:
+            raise FileExistsError(
+                f"Output directory {output_dir} is not empty; directory "
+                "decompositions are bing saved to should be empty.")
+        # Write data to top level
+        x: Decomposition = list(decompositions.values())[0][0]
+        x_path: pathlib.Path = output_dir / "x.tsv"
+        x.parameters.x.to_csv(x_path, sep=delim)
+        for rank, ds in decompositions.items():
+            rank_dir: pathlib.Path = output_dir / str(rank)
+            rank_dir.mkdir()
+            d: Decomposition
+            for i, d in enumerate(ds):
+                decomp_dir: pathlib = rank_dir / str(i)
+                d.save(decomp_dir,
+                       compress=compress,
+                       param_path=None,
+                       x_path=x_path,
+                       symlink=symlink,
+                       delim=delim)
+
+    @staticmethod
+    def __load_stream(name: str,
+                      stream,
+                      delim: str = "\t"
+                      ) -> Optional[Union[pd.DataFrame, pd.Series, Dict]]:
+        """Read a file as appropriate type based on name. Intended to handle
+        files read from directory or tarfile."""
+
+        xtn: str = name.split(".")[-1]
+        res_obj = None
+        if xtn == "tsv":
+            df: pd.DataFrame = pd.read_csv(stream,
+                                           index_col=0,
+                                           sep=delim)
+            # Collapse to series if only a single column
+            res_obj = df if df.shape[1] > 1 else df.iloc[:,0]
+        if xtn == "yaml":
+            res_obj = yaml.safe_load(stream)
+        else:
+            logging.debug("Ignored file %s due to extension", name)
+        stream.close()
+        return res_obj
+
+    @staticmethod
+    def __load_gzip(gzip: os.PathLike,
+                    delim: str = "\t"
+                    ) -> Dict[str, Union[pd.DataFrame, pd.Series, Dict]]:
+        """Load decomposition data from .tar.gz."""
+
+        # Loop through tar members and load as appropriate type based on
+        # extension
+        f: tarfile.TarFile
+        with tarfile.open(gzip, 'r:gz') as f:
+            return {n: Decomposition.__load_stream(n, f.extractfile(n), delim)
+                    for n in f.getnames() if n in Decomposition.LOAD_FILES}
+
+    @staticmethod
+    def __load_dir(dir: os.PathLike,
+                   delim: str = "\t"
+                   ) -> Dict[str, Union[pd.DataFrame, pd.Series, Dict]]:
+        """Load decomposition data from directory."""
+
+        # Loop through dir contents and load
+        dir_path: pathlib.Path = pathlib.Path(dir)
+        return {n.name: Decomposition.__load_stream(n.name, n.open(), delim)
+                for n in dir_path.iterdir()
+                if n.name in Decomposition.LOAD_FILES}
+
+    @staticmethod
+    def load(in_dir: os.PathLike,
+             x: Optional[Union[pd.DataFrame, str, os.PathLike]] = None,
+             delim: str = "\t"):
+        """Load a decomposition from disk.
+
+        Loads a decomposition previously saved using :method:`save`. Will
+        automatically determine whether this is a directory or .tar.gz.
+        Can provide a DataFrame of the X input matrix, primarily this is
+        so when loading multiple decompositions they can all reference the
+        same object. Can also provide an explicit path; if not provided will
+        attempt to load from x.tsv.
+
+        :param in_dir: Directory or .tar.gz containing decomposition.
+        :param x: Either the X input matrix as a DataFrame, or a path to
+            a delimiter-separated copy of the X matrix. If None, will attempt
+            to load from x.tsv.
+        :param delim: Delimiter for tabular data
+        """
+
+        # Get data from either directory or tar.gz.
+        in_path: pathlib.Path = pathlib.Path(in_dir)
+        data: Dict[str, Union[pd.DataFrame, pd.Series, Dict]] = (
+            Decomposition.__load_gzip(in_path, delim)
+            if in_path.suffix == ".gz" else
+            Decomposition.__load_dir(in_path, delim)
+        )
+
+        # Get X if required
+        x_mat: pd.DataFrame = None
+        if isinstance(x, pd.DataFrame):
+            x_mat = x
+        elif x is not None:
+            # Should be a pathlike
+            x_path: pathlib.Path = pathlib.Path(x)
+            x_mat = pd.read_csv(x_path,
+                                index_col=0,
+                                sep=delim)
+        if x_mat is None:
+            # Attempt to recover from directory dict
+            x_mat = data['x.tsv']
+
+        # Validate that we have all the expected files
+        if not set(Decomposition.LOAD_FILES[1:]).issubset(set(data.keys())):
+            missing: Set[str] = (set(Decomposition.LOAD_FILES[:2])
+                                 .difference(set(data.keys())))
+            raise IndexError(
+                f"Required file(s) {missing} not found when loading from "
+                f"{str(in_path)}")
+
+        # Make a parameters object without x as we are handling that
+        # separately
+        param_dict: Dict[str, Any] = data['parameters.yaml']
+        xless: Dict[str, Any] = {n: v for n, v in param_dict.items()
+                                 if n != 'x'}
+        params: NMFParameters = NMFParameters(
+            x=x_mat,
+            **xless
+        )
+
+        # Make Decomposition object
+        decomp: Decomposition = Decomposition(
+            parameters=params,
+            h=data['h.tsv'],
+            w=data["w.tsv"]
+        )
+        decomp.names = data['properties.yaml']['names']
+        decomp.colors = data['properties.yaml']['colors']
+
+        return decomp
+
+    @staticmethod
+    def load_decompositions(in_dir: os.PathLike,
+                            delim: str = "\t"
+                            ) -> Dict[int, List[Decomposition]]:
+        """Load multiple decompositions.
+
+        Load a set of decompositions previously saved using
+        :method:`save_decompositions`. Will attempt to share a reference to
+        the same X matrix for memory reasons. The output is a dictionary
+        with keys being ranks, and values being lists of decompositions
+        for that rank.
+
+        :param in_dir: Directory to read from
+        :param delim: Delimiter for tabular data files
+        """
+        # Load x
+        in_path: pathlib.Path = in_dir
+        x_mat: pd.DataFrame = pd.read_csv(
+            in_path / "x.tsv",
+            index_col=0,
+            sep=delim
+        )
+
+        # Get list of numeric subdirectories
+        num_subdirs: List[pathlib.Path] = [
+            d for d in in_path.iterdir()
+            if d.is_dir() and re.match(r'^\d*$', d.name) is not None
+        ]
+        num_subdirs = sorted(num_subdirs,
+                             key=lambda x: int(x.name))
+        decomps: Dict[int, List[Decomposition]] = {}
+        for subdir in num_subdirs:
+            decomps[int(subdir.name)] = [
+                Decomposition.load(d, x=x_mat, delim=delim)
+                for d in sorted(
+                    (d for d in subdir.iterdir() if
+                     re.match(r'^\d*$', d.name) is not None and
+                     d.is_dir()),
+                    key=lambda x: int(x.name)
+                )
+            ]
+        return decomps
+
 
     def __getattr__(self, item) -> Any:
         """Allow access to parameter attributes through this class as a
@@ -1813,8 +2194,8 @@ class Decomposition:
                                     threshold: float) -> pd.Series:
         """Determine which signatures in a series are representative."""
         sorted_greater: pd.Series = (
-            sig.sort_values(ascending=False)
-            .cumsum() >= threshold)
+                sig.sort_values(ascending=False)
+                .cumsum() >= threshold)
         # Determine first index hitting threshold
         first_true: int = 0 if all(sig.isna()) else (next(
             i for i, x in enumerate(sorted_greater.items()) if x[1]) + 1)
@@ -1847,4 +2228,290 @@ class Decomposition:
             )
 
 
+@click.command()
+@click.option("-i",
+              "--input",
+              required=True,
+              type=click.Path(exists=True, dir_okay=False),
+              help="""Matrix to be decomposed, in character delimited 
+              format. Use -d/--delimiter to set delimiter.""")
+@click.option("-o",
+              "--output_dir",
+              required=False,
+              type=click.Path(dir_okay=True),
+              default=os.getcwd(),
+              help="""Directory to write output. Defaults to current directory.
+              Output is a table with a row for each shuffle and rank 
+              combination, and columns for each of the rank selection measures 
+              (R^2, cosine similarity, etc.)""")
+@click.option("-d",
+              "--delimiter",
+              required=False,
+              type=str,
+              default="\t",
+              help="""Delimiter to use for input and output tables. Defaults
+              to tab.""")
+@click.option("--progress/--no-progress",
+              default=True,
+              show_default=True,
+              help="""Display progress bar showing number of bi-cross 
+              validation iterations completed and remaining.""")
+@click.option("--log_warning", "verbosity", flag_value="warning",
+              default=True,
+              help="Log only warnings or higher.")
+@click.option("--log_info", "verbosity", flag_value="info",
+              help="Log progress information as well as warnings etc.")
+@click.option("--log_debug", "verbosity", flag_value="debug",
+              help="Log debug info as well as info, warnings, etc.")
+@click.option("--seed",
+              required=False,
+              type=int,
+              help="""Seed to initialise random state. Specify if results
+              need to be reproducible.""")
+@click.option("--l1_ratio",
+              required=False,
+              type=float,
+              default=0.0,
+              show_default=True,
+              help="""Regularisation mixing parameter. In range 0.0 <= l1_ratio 
+              <= 1.0. This controls the mix between sparsifying and densifying
+              regularisation. 1.0 will encourage sparsity, 0.0 density.""")
+@click.option("--alpha",
+              required=False,
+              type=float,
+              default=0.0,
+              show_default=True,
+              help="""Multiplier for regularisation terms.""")
+@click.option("--max_iter",
+              required=False,
+              type=int,
+              default=3000,
+              show_default=True,
+              help="""Maximum number of iterations during decomposition. Will 
+              terminate earlier if solution converges. Warnings will be emitted
+              when the solutions fail to converge.""")
+@click.option("--beta_loss",
+              required=False,
+              type=click.Choice(
+                  ['kullback-leibler', 'frobenius', 'itakura-saito']),
+              default="kullback-leibler",
+              show_default=True,
+              help="""Beta loss function for NMF decomposition.""")
+@click.option("--init",
+              required=False,
+              type=click.Choice(
+                  ["nndsvdar", "random", "nndsvd", "nndsvda"]),
+              default="random",
+              show_default=True,
+              help="""Method to use when intialising H and W for 
+              decomposition.""")
+@click.option("--n_runs",
+              required=False,
+              type=int,
+              default=20,
+              show_default=True,
+              help=("Number of times to run decomposition for each rank. "
+                    "Ignored when init is a deterministic method "
+                    "(nndsvd/nndsvda)."))
+@click.option("--top_n",
+              required=False,
+              type=int,
+              default=5,
+              show_default=True,
+              help=("Keep and report only the best top_n decompositions "
+                    "of the n_runs decompositions produced. Which are the best "
+                    "decompositions is determined by top_criteria. Ignored "
+                    "when init is a deterministic method (nndsvd/nndsvda)."))
+@click.option("--top_criteria",
+              required=False,
+              type=click.Choice(list(Decomposition.TOP_CRITERIA.keys())),
+              default="beta_divergence",
+              show_default=True,
+              help=("Criteria used to determine which of the n_runs "
+                    "decompositions to keep and report.")
+              )
+@click.option("--compress/--no_compress",
+              type=bool,
+              default=False,
+              show_default=True,
+              help="Compress output folders to .tar.gz. Default is to output "
+                   "each decomposition to a separate folder.")
+@click.option("--symlink/--no-symlink",
+              type=bool,
+              default=False,
+              show_default=True,
+              help="Create a symlink for files which do not vary between runs ("
+                   "input, parameters, etc). If disabled, will make redundant "
+                   "copies.")
+@click.argument("ranks",
+                nargs=-1,
+                type=int)
+def cli_decompose(
+        input: str,
+        output_dir: str,
+        delimiter: str,
+        progress: bool,
+        verbosity: str,
+        seed: int,
+        l1_ratio: float,
+        alpha: float,
+        max_iter: int,
+        beta_loss: str,
+        init: str,
+        n_runs: int,
+        top_n: int,
+        top_criteria: str,
+        compress: bool,
+        ranks: List[int],
+        symlink: bool
+) -> None:
+    """Decompositions for RANKS.
 
+    RANKS is a list of ranks for which to generate decompositions.
+
+    Generate a number of decompositions for each the specified ranks. NMF
+    solutions are non-unique and depend on initialisation, so when using an
+    initialisation with randomness multiple solutions can be produced.
+    From these solutions, the best can be retained based on criteria such
+    as reconstruction error or cosine similarity.
+
+    Some initialisation methods are deterministic, and as such only a single
+    decomposition will be produced.
+
+    The output is H and W matrices for each decomposition, tables of quality
+    scores, and some analyses with default parameters. For further analysis,
+    decompositions can be loaded using Decomposition.from_dir, or tables used
+    directly for custom analyses. By default, a symlink to the input data
+    """
+    __configure_logger(verbosity)
+
+    # Validate arguments
+    # Make ranks unique, sort from high to low
+    ranks: List[int] = sorted(set(ranks), reverse=True)
+    # Require output directory to be empty or not exist, so not
+    # overwriting results
+    output_path: pathlib.Path = pathlib.Path(output_dir)
+    if output_path.is_dir():
+        if len(list(output_path.iterdir())) > 0:
+            logging.fatal("Output directory %s must be empty",
+                          output_path)
+        return
+    if not output_path.exists():
+        # Attempt to create directory and ensure it is writable
+        output_path.mkdir(parents=True, exist_ok=True)
+
+    # Read input data
+    x: pd.DataFrame = pd.read_csv(input, sep=delimiter, index_col=0)
+    __validate_input_matrix(x)
+
+    # Log params being used
+    param_str: str = (
+        f"\n"
+        f"Data Locations\n"
+        f"------------------------------\n"
+        f"Input:            {input}\n"
+        f"Output:           {output_dir}\n"
+        f"\n"
+        f"Decomposition Parameters\n"
+        f"------------------------------\n"
+        f"Random Starts:    {n_runs}\n"
+        f"Keep Top N:       {top_n}\n"
+        f"Top Criteria:     {top_criteria}\n"
+        f"Seed:             {seed}\n"
+        f"Ranks:            {ranks}\n"
+        f"L1 Ratio:         {l1_ratio}\n"
+        f"Alpha:            {alpha}\n"
+        f"Max Iterations:   {max_iter}\n"
+        f"Beta Loss:        {beta_loss}\n"
+        f"Initialisation:   {init}\n"
+    )
+    logging.info(param_str)
+
+    # Write parameters to output directory. Also ensures we have write access
+    # before engaging in expensive computation.
+    try:
+        with (output_path / "parameters.yaml").open(mode="w") as f:
+            yaml.safe_dump(dict(
+                input=input,
+                output=output_dir,
+                ranks=ranks,
+                n_runs=n_runs,
+                top_n=top_n,
+                top_criteria=top_criteria,
+                seed=seed,
+                l1_ratio=l1_ratio,
+                alpha=alpha,
+                max_iter=max_iter,
+                beta_loss=beta_loss,
+                init=init
+            ), f)
+    except Exception as e:
+        logging.fatal("Unable to write to output directory")
+        return
+
+    # Make decompositions
+    logging.info("Beginning decompositions")
+    decomps: Dict[int, List[Decomposition]] = decompositions(
+        x=x,
+        ranks=ranks,
+        random_starts=n_runs,
+        top_n=top_n,
+        top_criteria=top_criteria,
+        seed=seed,
+        alpha=alpha,
+        l1_ratio=l1_ratio,
+        max_iter=max_iter,
+        beta_loss=beta_loss,
+        init=init,
+        progress_bar=progress
+    )
+    logging.info("Decomposition complete")
+
+    # Write decompositions
+    logging.info("Write decompositions to %s", output_path)
+    Decomposition.save_decompositions(decomps,
+                                      output_dir=output_path,
+                                      symlink=symlink,
+                                      delim=delimiter,
+                                      compress=compress)
+    logging.info("Decomposition completed")
+
+
+def __configure_logger(verbosity: str) -> None:
+    """Set logging format and level for CLI. Verbosity should be warning,
+    info, or debug."""
+
+    # TODO: This is setting for all imported modules as well, fix logging
+    log_level: int = logging.WARNING
+    match verbosity:
+        case "debug":
+            log_level = logging.DEBUG
+        case "info":
+            log_level = logging.INFO
+    logging.basicConfig(
+        format='%(levelname)s [%(asctime)s]: %(message)s',
+        datefmt='%d/%m/%Y %I:%M:%S',
+        level=log_level,
+        force=True
+    )
+
+
+def __validate_input_matrix(x: pd.DataFrame) -> None:
+    """Check input matrix has sensible format and values."""
+    # Check shape
+    if x.shape[0] < 2 or x.shape[1] < 2:
+        logging.fatal("Loaded matrix invalid shape: (%s)", x.shape)
+        raise ValueError("Matrix has invalid shape")
+    # All columns should be numeric (either float or int)
+    if not all(np.issubdtype(x, np.integer) or np.issubdtype(x, np.floating) for
+               x in x.dtypes):
+        logging.fatal("Loaded matrix has non-numeric columns")
+        raise ValueError("Loaded matrix has non-numeric columns")
+    # Non-negativity constraint
+    if (x < 0).any().any():
+        logging.fatal("Loaded matrix contains negative values")
+        raise ValueError("Loaded matrix contains negative values")
+    # Don't accept NaN
+    if x.isna().any().any():
+        logging.fatal("Loaded matrix contains NaN/NA values")
+        raise ValueError("Loaded matrix contains NaN/NA values")

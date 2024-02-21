@@ -14,6 +14,7 @@ pandas = "^2.1.4"
 plotnine = "^0.12.4"
 tqdm = "^4.66.1"
 patchworklib = "^0.6.3"
+pyyaml = "^6.0.1"
 
 [tool.poetry.dev-dependencies]
 
@@ -40,6 +41,7 @@ patch_without_tag = true                    # patch release by default
 [tool.poetry.scripts]
 es_fit = "enterosig.reapply:cli"
 rank_select = "enterosig.denovo:cli_rank_selection"
+decompose = "enterosig.denovo:cli_decompose"
 #es_ui = "enterosig.streamlist"
 
 [build-system]

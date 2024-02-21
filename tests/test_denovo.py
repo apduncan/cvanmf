@@ -15,7 +15,8 @@ import pytest
 from enterosig import models
 from enterosig.denovo import BicvSplit, BicvFold, bicv, _cosine_similarity, \
     rank_selection, BicvResult, plot_rank_selection, decompose, NMFParameters, \
-        decompositions, Decomposition, cli_rank_selection
+    decompositions, Decomposition, cli_rank_selection
+
 
 @pytest.fixture
 def small_overlap_blocks(scope="session") -> pd.DataFrame:
@@ -32,7 +33,7 @@ def small_overlap_blocks(scope="session") -> pd.DataFrame:
     base_w, tail_w = divmod(j, k)
     # Overlap proportion - proportion of block's base dimension to extend 
     # block by
-    overlap_proportion: float = 0.1
+    overlap_proportion: float = 0.25
     overlap_h: int = math.ceil(base_h * overlap_proportion)
     overlap_w: int = math.ceil(base_w * overlap_proportion)
     # Make a randomly filled matrix, multiply by mask matrix which has 0 
@@ -53,29 +54,29 @@ def small_overlap_blocks(scope="session") -> pd.DataFrame:
         np.random.normal(loc=0.0, scale=0.1, size=(i, j)))
     # Convert to DataFrame and add some proper naming for rows/cols
     return pd.DataFrame(
-        block_mat, 
+        block_mat,
         index=[f'feat_{i_lab}' for i_lab in range(i)],
         columns=[f'samp_{j_lab}' for j_lab in range(j)])
 
 
 @pytest.fixture
 def small_decomposition(
-    small_overlap_blocks,
-    scope="session"
-    ) -> Decomposition:
+        small_overlap_blocks,
+        scope="session"
+) -> Decomposition:
     """A single decomposition of the small_overlap_blocks dataset."""
     return decompose(NMFParameters(
         x=small_overlap_blocks,
-        rank=4,
+        rank=3,
         seed=4298
     ))
 
 
 @pytest.fixture
 def small_rank_selection(
-    small_overlap_blocks,
-    scope="session"
-    ) -> Dict[int, List[BicvResult]]:
+        small_overlap_blocks,
+        scope="session"
+) -> Dict[int, List[BicvResult]]:
     """Rank selection carried out on a small matrix with overlapping
     block diagonal structure."""
     return rank_selection(
@@ -84,14 +85,14 @@ def small_rank_selection(
         shuffles=5,
         seed=4298,
         progress_bar=False
-    ) 
+    )
 
 
 @pytest.fixture
 def small_bicv_result(
-    small_overlap_blocks,
-    scope="session"
-    ) -> BicvResult:
+        small_overlap_blocks,
+        scope="session"
+) -> BicvResult:
     """BiCV run on a single shuffled matrix."""
     df: pd.DataFrame = small_overlap_blocks
     shuffles: List[BicvSplit] = BicvSplit.from_matrix(
@@ -102,9 +103,9 @@ def small_bicv_result(
 
 @pytest.fixture
 def small_decompositions_random(
-    small_overlap_blocks,
-    scope="session"
-    ) -> Dict[int, List[Decomposition]]:
+        small_overlap_blocks,
+        scope="session"
+) -> Dict[int, List[Decomposition]]:
     """Get 'best' decompositions for a small dataset from random 
     initialisations."""
     res = decompositions(
@@ -112,16 +113,17 @@ def small_decompositions_random(
         random_starts=5,
         ranks=[3, 4, 5],
         top_n=3,
-        top_criteria="cosine_similarity"
+        top_criteria="cosine_similarity",
+        progress_bar=False
     )
     return res
 
 
 @pytest.fixture
 def small_decompositions_deterministic(
-    small_overlap_blocks,
-    scope="session"
-    ) -> Dict[int, List[Decomposition]]:
+        small_overlap_blocks,
+        scope="session"
+) -> Dict[int, List[Decomposition]]:
     """Get single decomposittion for a small dataset from a deterministic
     initialisation."""
     res = decompositions(
@@ -130,9 +132,46 @@ def small_decompositions_deterministic(
         ranks=[3, 4, 5],
         top_n=3,
         init="nndsvda",
-        top_criteria="cosine_similarity"
+        top_criteria="cosine_similarity",
+        progress_bar=False
     )
     return res
+
+
+def is_decomposition_close(a: Decomposition, b: Decomposition) -> bool:
+    """Test whether two decomposition are equal (within tolerance). Used
+    for checking equivalence between source and loaded versions."""
+    # Check equivalence of w, h, and x matrices, as all other properties are
+    # calculated from these
+    __tracebackhide__ = True
+    for prop in ['w', 'h', 'x']:
+        if not np.allclose(getattr(a, prop), getattr(b, prop)):
+            pytest.fail(f'{prop} not equivalent between decompositions')
+    # Parameters object
+    a_param: Dict = a.parameters._asdict()
+    b_param: Dict = b.parameters._asdict()
+    a_param.pop("x")
+    b_param.pop("x")
+    if a_param != b_param:
+        pytest.fail("Parameters tuple not equivalent")
+    # Color / name settings
+    if a.names != b.names:
+        pytest.fail("Names not equivalent")
+    if a.colors != b.colors:
+        pytest.fail("Colors not equivalent")
+
+
+def are_decompositions_close(a: Dict[int, List[Decomposition]],
+                             b: Dict[int, List[Decomposition]]):
+    """Are multiple decompositions equivalent?"""
+
+    # Flatten each and compare elementwise
+    paired = list(zip(
+        itertools.chain.from_iterable(a.values()),
+        itertools.chain.from_iterable(b.values())
+    ))
+    for a_i, b_i in paired:
+        is_decomposition_close(a_i, b_i)
 
 
 def test_bicv_split(small_overlap_blocks):
@@ -214,8 +253,8 @@ def test_bicv_folds(small_overlap_blocks):
 
 
 def test_bicv_split_io(
-    small_overlap_blocks,
-    tmp_path: pathlib.Path):
+        small_overlap_blocks,
+        tmp_path: pathlib.Path):
     """Test BicvSplit I/O"""
 
     df: pd.DataFrame = small_overlap_blocks
@@ -292,7 +331,7 @@ def test_rank_selection(small_rank_selection: Dict[int, List[BicvResult]]):
     res_num: List[int] = [len(x) for x in small_rank_selection.values()]
     assert all(x == res_num[0] for x in res_num[1:]), \
         ("Different numbers of results for some ranks."
-        "Some runs probably failed.")
+         "Some runs probably failed.")
     # Check getting correct result types
     for res in itertools.chain.from_iterable(small_rank_selection.values()):
         assert isinstance(res, BicvResult)
@@ -317,16 +356,16 @@ def test_results_to_table(small_rank_selection):
         "results_to_table did not return DataFrame"
     # TODO: Move these parameters out somewhere rather than magic numbers
     assert res_df.shape[0] == (
-        len(set(res_df['rank'])) * len(set(res_df['shuffle_num']))), \
-            "Incorrect number of rows in results table"
+            len(set(res_df['rank'])) * len(set(res_df['shuffle_num']))), \
+        "Incorrect number of rows in results table"
     assert not res_df.isnull().any().any(), \
         "Null values in rank selection table"
 
 
 def test_plot_rank_selection(
-    tmp_path: pathlib.Path,
-    small_rank_selection
-    ):
+        tmp_path: pathlib.Path,
+        small_rank_selection
+):
     res: Dict[int, List[BicvResult]] = small_rank_selection
     res_df: pd.DataFrame = BicvResult.results_to_table(res)
     plt = plot_rank_selection(res, exclude=None, geom="box")
@@ -347,7 +386,7 @@ def test_decompose(small_decomposition):
 
     # Floats
     for n in {'cosine_similarity', 'rss', 'r_squared', 'beta_divergence',
-        'l2_norm', 'sparsity_h', 'sparsity_w'}:
+              'l2_norm', 'sparsity_h', 'sparsity_w'}:
         assert isinstance(getattr(d, n), float), \
             f"{n} is not a float"
 
@@ -367,9 +406,9 @@ def test_decompose(small_decomposition):
         assert not getattr(d, n).isnull().any().any(), \
             f"{n} contains null values"
         assert all(np.issubdtype(x, np.floating)
-                    for x in getattr(d, n).dtypes), \
+                   for x in getattr(d, n).dtypes), \
             f"{n} has non-float columns"
-        
+
     # Dataframe and Series dimensions, including derived properties
     assert all([
         d.w.shape == tuple(reversed(d.h.shape)),
@@ -379,23 +418,23 @@ def test_decompose(small_decomposition):
         d.monodominant_samples().shape[0] == d.h.shape[1],
         d.primary_signature.shape[0] == d.h.shape[1],
         d.representative_signatures().shape == d.h.shape
-        ]), \
+    ]), \
         "Series, matrices and colors do not have matching shapes"
 
     # String lists
     for n in {'names', 'colors'}:
         assert all(isinstance(x, str) and len(x) > 0 for x in d.colors), \
             f"{n} not all non-empty strings"
-    
-    # Basic check on parameters
+
+        # Basic check on parameters
         assert isinstance(d.parameters, NMFParameters), \
             "Parameters incorrect type"
 
 
 def test_decompositions(
-    small_decompositions_random,
-    small_decompositions_deterministic
-    ):
+        small_decompositions_random,
+        small_decompositions_deterministic
+):
     # Check we get the same number of decompositions for each rank, incase some
     # are silenty failing
     cnt_decomps: Iterable[int] = list(
@@ -421,25 +460,25 @@ def test_decompositions(
                           np.array(sorted(cos_sim, reverse=True))
                           ), \
         "Results not sorted by criteria (descending cosine similarity)."
-    
+
     # Check all items are Decomposition type
     assert all(
         isinstance(x, Decomposition) for x in
         itertools.chain.from_iterable(small_decompositions_random.values())
-        ), \
+    ), \
         "Random initialisation returned non-Decomposition objects"
     assert all(
         isinstance(x, Decomposition) for x in
         itertools.chain.from_iterable(
             small_decompositions_deterministic.values()
-            )
-        ), \
+        )
+    ), \
         "Random initialisation returned non-Decomposition objects"
 
 
 def test_scaled(
-    small_decomposition
-    ):
+        small_decomposition
+):
     # TSS scaling
     h: pd.DataFrame = small_decomposition.scaled('h', by='sample')
     assert np.allclose(h.sum(), 1.0), \
@@ -462,8 +501,8 @@ def test_scaled(
         "Feature-scaled W does not sum to 1."
     # Should feature scale by default
     w = small_decomposition.scaled('w')
-    assert np.allclose(w.sum(axis=1), 1.0), \
-        "Default W scaling does not have feature sum of 1."
+    assert np.allclose(w.sum(), 1.0), \
+        "Default W scaling does not have signature sum of 1."
     # Sample scaling W should default to feature scaling
     w_feat = small_decomposition.scaled('w', by='sample')
     assert np.allclose(w_feat, w), \
@@ -485,27 +524,27 @@ def test_scaled(
 
 
 def test_cli_rank_selection(
-    small_overlap_blocks: pd.DataFrame,
-    tmp_path: pathlib.Path
-    ):
+        small_overlap_blocks: pd.DataFrame,
+        tmp_path: pathlib.Path
+):
     """Run the CLI command for rank selection."""
     # Write our block data to the temp path
     small_overlap_blocks.to_csv(tmp_path / "input.tsv", sep="\t")
     runner: CliRunner = CliRunner()
     with runner.isolated_filesystem(temp_dir=tmp_path) as td:
         result = runner.invoke(cli_rank_selection,
-            [
-                "--input", tmp_path / "input.tsv",
-                "-o", td,
-                "-d", "\t",
-                "--shuffles", "5",
-                "--no-progress",
-                "--seed", "4928",
-                "-l", "3",
-                "-u", "5",
-                "--log_debug"
-            ]
-        )
+                               [
+                                   "--input", tmp_path / "input.tsv",
+                                   "-o", td,
+                                   "-d", "\t",
+                                   "--shuffles", "5",
+                                   "--no-progress",
+                                   "--seed", "4928",
+                                   "-l", "3",
+                                   "-u", "5",
+                                   "--log_debug"
+                               ]
+                               )
     assert result.exit_code == 0, \
         "CLI rank selection did had non-zero exit code"
     td_path: pathlib.Path = pathlib.Path(td)
@@ -517,3 +556,66 @@ def test_cli_rank_selection(
 # TODO: Tests for plotting functions.
 # Leaving for now as might rewrite to use a different plotting method, 
 # patchworklib seems not to play so nicely with 3.12
+def test_save(small_decomposition: Decomposition,
+              tmp_path: pathlib.Path):
+    """Ensure that decompositions and plots can be written to disk."""
+    matplotlib.pyplot.switch_backend("Agg")
+    odir: pathlib.Path = tmp_path / "test_save"
+    small_decomposition.save(
+        out_dir=odir
+    )
+    for expected_file in [
+        "h.tsv", "h_scaled.tsv", "model_fit.tsv", "monodominant_samples.tsv",
+        "plot_modelfit.pdf", "plot_pcoa.pdf", "plot_relative_weight.pdf",
+        "primary_signature.tsv", "quality_series.tsv",
+        "representative_signatures.tsv", "w.tsv", "w_scaled.tsv", "x.tsv"]:
+        assert (odir / expected_file).is_file(), \
+            f"Expected file {expected_file} not created"
+        assert (odir / expected_file).stat().st_size > 0, \
+            f"File {expected_file} is empty (st_size <= 0)"
+    # TODO: Tests for symlinking properly etc.
+
+
+def test_quality_series(small_decomposition):
+    """Are the properties of a decomposition being produced as a series
+    correctly?"""
+    s: pd.Series = small_decomposition.quality_series
+    assert s.size == 7, "Some properties not in series"
+    assert not any(s.isna()), "Some properties are NaN/NA"
+    assert not any(s.isnull()), "Some properties are null"
+
+
+def test_save_load_decompositions(small_decompositions_random,
+                                  tmp_path: pathlib.Path):
+    matplotlib.pyplot.switch_backend("Agg")
+    Decomposition.save_decompositions(
+        small_decompositions_random,
+        output_dir=tmp_path / "test_save_decompositions"
+    )
+    loaded: Dict[int, List[Decomposition]] = Decomposition.load_decompositions(
+        tmp_path / "test_save_decompositions"
+    )
+    are_decompositions_close(small_decompositions_random, loaded)
+
+    # Test that load is sharing a reference to input data X
+    keys: List[int] = list(loaded.keys())
+    assert loaded[keys[0]][0].x is loaded[keys[1]][0].x, \
+        "Not reusing X matrix when loading multiple decompositions"
+
+    # Test compressed output
+    Decomposition.save_decompositions(
+        small_decompositions_random,
+        output_dir=tmp_path / "test_save_decompositions_compressed",
+        compress=True
+    )
+    loaded: Dict[int, List[Decomposition]] = Decomposition.load_decompositions(
+        tmp_path / "test_save_decompositions_compressed"
+    )
+    are_decompositions_close(small_decompositions_random, loaded)
+
+def test_load(small_decomposition: Decomposition,
+              tmp_path: pathlib.Path):
+    """Can a single decomposition be loaded successfully?"""
+    small_decomposition.save(tmp_path / "saved_decomp")
+    loaded: Decomposition = Decomposition.load(tmp_path / "saved_decomp")
+    is_decomposition_close(small_decomposition, loaded)
