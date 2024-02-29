@@ -64,7 +64,13 @@ LOG_LABEL = "Data Processing Log"
 DOWNLOAD_LABEL = "Download Enterosignatures"
 
 WEIGHT_PLOT_TITLE = "### Enterosignature Weights"
+WEIGHT_PLOT_CAPTION = """Samples are arranged along the horizontal axis.
+    The stacked bar plot shows the relative weight of each Enterosignature in each sample.
+    At the top the model fit for each sample is indicated, with samples with a poor
+    fit (<= 0.4) indicated in red."""
 MODELFIT_PLOT_TITLE = "### Model Fit Distribution"
+PCOA_PLOT_TITLE = ("### PCoA Ordination \n"
+                   "Points are coloured by their Primary ES")
 
 EXPANDER_UPLOAD = "Upload"
 EXPANDER_LOG = "Data Processing Log"

@@ -2,7 +2,7 @@
 # Enterosignature Transformer
 Transform GTDB taxonomic abundance tables to Enterosignature weights
 """
-
+from importlib.resources import files
 from typing import Collection, List, Tuple, Union
 from datetime import date
 import io
@@ -10,9 +10,12 @@ import zipfile as zf
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
+import plotnine
 import streamlit as st
 
-from src.enterosig.reapply import (EnteroException, ReapplyResult, transform_table)
+import enterosig.models
+from enterosig.denovo import Decomposition
+from enterosig.reapply import (EnteroException, ReapplyResult, transform_table)
 import text
 
 # Remove the big top margin to gain more space
@@ -27,8 +30,9 @@ hide_streamlit_style = """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
 # Constants for resource locations etc
-ES_W_MATRIX: str = "data/ES5_W.tsv"
+ES_W_MATRIX: pd.DataFrame = enterosig.models.five_es()
 PLOTLY_WIDTH: int = 650
+
 
 # STREAMLIT SPECIFIC FUNCTIONS
 @st.cache_data
@@ -43,30 +47,33 @@ def _zip_items(items: Collection[Tuple[str, str]]
         for name, contents in items:
             z.writestr(name, contents)
         # Always add the readme
-        z.write("data/README.txt", "README.txt")
+        z.write(files("enterosig.data").joinpath("README.txt"), arcname="README.txt")
     return zbuffer
+
 
 @st.cache_data
 def _plot_heatmap(es: pd.DataFrame) -> go.Figure:
     es_t: pd.DataFrame = es.T
     p_hmap: go.Figure = go.Figure(
         go.Heatmap(
-            z = es_t.values,
-            x = es_t.columns,
-            y = es_t.index
+            z=es_t.values,
+            x=es_t.columns,
+            y=es_t.index
         )
     ).update_layout(width=PLOTLY_WIDTH)
     return p_hmap
+
 
 @st.cache_data
 def _plot_hist(model_fit: pd.DataFrame) -> go.Figure:
     return px.histogram(model_fit, x="model_fit"
                         ).update_layout(width=PLOTLY_WIDTH)
 
+
 # TODO(apduncan): Caching producing partly empty logs on reruns, might
 # be confusing for users
 
-class Logger():
+class Logger:
     """Write log to screen as it occurs, but also collect so logs can be 
     written to a file in the results zip."""
 
@@ -84,22 +91,25 @@ class Logger():
         file."""
         return "\n".join(self.__loglines)
 
+
 es_log: Logger = Logger()
+
 
 # WRAPPER FUNCTIONS
 # Wrap some long running functions, so we can apply the streamlit decorators
 # without having to apply them to the commandline version of those same
 # functions
 @st.cache_resource
-def _get_es_w(file: str) -> pd.DataFrame:
-    return pd.read_csv(file, index_col=0, sep="\t") 
+def _get_es_w() -> pd.DataFrame:
+    return ES_W_MATRIX
 
-@st.cache_data
+
 def _transform_table(abd: pd.DataFrame,
-                     family_rollup: bool = True) -> ReapplyResult:
+                     family_rollup: bool = True) -> Decomposition:
     return transform_table(abundance=abd, rollup=family_rollup,
-                           model_w=_get_es_w(ES_W_MATRIX),
+                           model_w=_get_es_w(),
                            hard_mapping={}, logger=es_log.log)
+
 
 # APP CONTENT
 # The app is quite long, so want to try and section it up so people don't 
@@ -111,8 +121,8 @@ st.title(text.TITLE)
 
 col_upload, col_opts = st.columns(spec=[0.8, 0.2])
 abd_file = col_upload.file_uploader(
-    label = text.UPLOAD_LABEL,
-    help = text.UPLOAD_TOOLTIP
+    label=text.UPLOAD_LABEL,
+    help=text.UPLOAD_TOOLTIP
 )
 col_opts.markdown('<div style="height: 0.5ex">&nbsp</div>',
                   unsafe_allow_html=True)
@@ -129,7 +139,6 @@ with expander_upload:
     st.markdown(text.INPUT_FORMAT)
     st.markdown(text.CAVEATS)
 
-
 if abd_file is not None:
     try:
         # Attempt to transform the data and return Enterosignatures
@@ -140,43 +149,68 @@ if abd_file is not None:
         # TODO(apduncan): Family rollup as a toggle
         abd_tbl = pd.read_csv(abd_file, sep="\t", index_col=0)
         with expander_log:
-            transformed: ReapplyResult = _transform_table(
+            transformed: Decomposition = _transform_table(
                 abd=abd_tbl, family_rollup=opt_rollup)
+            # Apply color mappings
+            transformed.colors = dict(
+                ES_Esch="#483838",
+                ES_Bifi="#009E73",
+                ES_Bact="#E69F00",
+                ES_Prev="#D55E00",
+                ES_Firm="#023e8a"
+            )
 
         # Zip up new W, new abundance, new H (enterosig weights), and model fit
+        # Can't use the Decomposition.save method as don't want to write to disk
+        # in a potentially multi-user environment we don't control.
+        # TODO: Make streamlit output format match the .save() format
         res_zip: io.BytesIO = _zip_items([
             ("w.tsv", transformed.w.to_csv(sep="\t")),
             ("h.tsv", transformed.h.to_csv(sep="\t")),
-            ("abundance.tsv", transformed.abundance_table.to_csv(sep="\t")),
+            ("w_scaled.tsv", transformed.scaled('w').to_csv(sep="\t")),
+            ("h_scaled.tsv", transformed.scaled('h').to_csv(sep="\t")),
+            ("x.tsv", transformed.parameters.x.to_csv(sep="\t")),
             ("model_fit.tsv", transformed.model_fit.to_csv(sep="\t")),
+            ("quality_measures.tsv", transformed.quality_series.to_csv(sep="\t")),
+            ("primary_signatures.tsv", transformed.primary_signature.to_csv(sep="\t")),
+            ("representative_signatures.tsv",
+             transformed.representative_signatures().to_csv(sep="\t")),
+            ("monodominant_samples.tsv",
+             transformed.monodominant_samples().to_csv(sep="\t")),
             ("taxon_mapping.tsv",
-                transformed.taxon_mapping.to_df().to_csv(sep="\t")),
+             transformed.feature_mapping.to_df().to_csv(sep="\t")),
             ("log.txt", es_log.to_file())
         ])
 
         with expander_results:
             st.download_button(
-                label = text.DOWNLOAD_LABEL,
-                data = res_zip,
-                file_name = "apply_es_results.zip"
+                label=text.DOWNLOAD_LABEL,
+                data=res_zip,
+                file_name="apply_es_results.zip"
             )
 
             st.markdown(text.RESULTS)
 
             st.markdown(text.WEIGHT_PLOT_TITLE)
+            st.markdown(text.WEIGHT_PLOT_CAPTION)
             # Provide a simple visualisations of the ES
-            p_hmap: go.Figure = _plot_heatmap(transformed.h)
-            st.plotly_chart(
-                p_hmap
+            st.write(
+                transformed.plot_relative_weight().savefig()
             )
 
             # Provide a simple visualisation of the model fit
             # TODO(apduncan): Bin count customisation, spline, explain fit
             st.markdown(text.MODELFIT_PLOT_TITLE)
-            p_hist: go.Figure = _plot_hist(transformed.model_fit)
-            st.plotly_chart(
-                p_hist
+            st.write(
+                transformed.plot_modelfit().draw()
             )
+
+            # Only perform PCoA if there are a smallish (<100) number of samples
+            st.markdown(text.PCOA_PLOT_TITLE)
+            if transformed.h.shape[1] < 500:
+                st.write(
+                    transformed.plot_pcoa().draw()
+                )
 
             st.session_state.uploaded = True
 

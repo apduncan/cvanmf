@@ -32,6 +32,9 @@ autoapi_options = ['members', 'undoc-members', 'show-inheritance',
 autoapi_member_order = 'groupwise'
 autoapi_python_class_content = 'both'
 
+# Permit long running cells in example notebooks
+nbsphinx_timeout = 360
+
 def skip_utils(app, what, name, obj, skip, options):
     if "RE_" in name or "EnteroException" in name:
        skip = True

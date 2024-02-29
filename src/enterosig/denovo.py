@@ -44,6 +44,8 @@ from sklearn.decomposition._nmf import _beta_divergence
 from sklearn.metrics.pairwise import cosine_similarity
 from tqdm import tqdm
 
+import enterosig.reapply as reapply
+
 # Type aliases
 # BicvSplit = List[pd.DataFrame]
 Numeric = Union[int, float]
@@ -506,7 +508,7 @@ class NMFParameters(NamedTuple):
         # provide a int32/int64, where manually set seed are python int
         # whose type cannot be checked by np.issubdtype
         seed: Union[int, str] = self.seed
-        if not isinstance(seed, int) or isinstance(seed, str):
+        if not (isinstance(seed, int) or isinstance(seed, str)):
             # This is likely a numpy int type which we will cast to int
             seed = int(seed)
         with open(path, 'w') as f:
@@ -1431,12 +1433,14 @@ class Decomposition:
     def __init__(self,
                  parameters: NMFParameters,
                  h: pd.DataFrame,
-                 w: pd.DataFrame) -> None:
+                 w: pd.DataFrame,
+                 feature_mapping: Optional[reapply.GenusMapping] = None) -> None:
         self.__h: pd.DataFrame = h
         self.__w: pd.DataFrame = w
         self.__params: NMFParameters = parameters
         self.__input_hash: Optional[int] = None
         self.__colors: List[str] = self.__default_colors(n=parameters.rank)
+        self.__feature_mapping: Optional[reapply.GenusMapping] = feature_mapping
 
     @property
     def h(self) -> pd.DataFrame:
@@ -1597,6 +1601,17 @@ class Decomposition:
             else:
                 self.__colors = color_list
 
+    @property
+    def feature_mapping(self) -> reapply.GenusMapping:
+        """Mapping of new data features to those in the model being reapplied
+
+        When fitting new data to an existing model, the naming of feature may vary or
+        some features may not exist in the model. This property holds an object which
+        maps from the new data features to the model features. For de-novo decompositions
+        this will be None.
+        """
+        return self.__feature_mapping
+
     def representative_signatures(self, threshold: float = 0.9) -> pd.DataFrame:
         """Which signatures describe a sample.
 
@@ -1707,7 +1722,7 @@ class Decomposition:
         return scaled.T if transpose else scaled
 
     def plot_modelfit(self,
-                      group: Optional[pd.Series] = None
+                      group: Optional[pd.Series] = None,
                       ) -> plotnine.ggplot:
         """Plot model fit distribution.
 
@@ -1744,12 +1759,70 @@ class Decomposition:
                 plotnine.ggplot(df, mapping=plotnine.aes(
                     x="group", y="model_fit")) +
                 plotnine.geom_boxplot() +
-                plotnine.ylab("Cosine Similarity")
+                plotnine.ylab("Cosine Similarity") +
+                plotnine.theme(
+                    axis_text_x=plotnine.element_text(angle=90)
+                )
         )
+
+    def plot_modelfit_point(self,
+                            threshold: Optional[float] = 0.4,
+                            yrange: Optional[Tuple[float, float]] = (0, 1)
+                            ) -> plotnine.ggplot:
+        """Model fit for each sample as a point on a vertical scale.
+
+        It may be of interest to look at the model fit of individual samples, so this
+        plot shows the model fit of each sample as a point on a vertical scale. A
+        threshold can be set below which the point will be coloured red to indicate
+        low model fit, by default this is 0.4. The plot is intended to behave well
+        when vertically stacked with that relative weight plot produced by
+        :method:`plot_relative_weight`
+
+        :param threshold: Value below which to colour the model fit red. If omitted
+            will not color any samples.
+        """
+        mf_df: pd.DataFrame = (self.model_fit
+                               .to_frame("model_fit")
+                               .reset_index(names="sample"))
+        mapping: plotnine.aes = plotnine.aes(x="sample", y="model_fit")
+        if threshold is not None:
+            mf_df['low_fit'] = mf_df['model_fit'] < (-1 if threshold is None
+                                                     else threshold)
+            mapping = plotnine.aes(x="sample", y="model_fit", color="low_fit")
+        plt: plotnine.ggplot = (plotnine.ggplot(
+            mf_df,
+            mapping=mapping
+            ) +
+                plotnine.geom_point() +
+                plotnine.theme_minimal() +
+                plotnine.theme(
+                    panel_grid_major_x=plotnine.element_blank(),
+                    panel_grid_minor_x=plotnine.element_blank(),
+                    panel_grid_minor_y=plotnine.element_blank(),
+                    axis_text_x=plotnine.element_text(angle=90)
+                ) +
+                plotnine.scale_y_continuous(
+                    limits=yrange
+                ) +
+                plotnine.ylab("Model Fit") +
+                plotnine.xlab("")
+        )
+        if threshold is not None:
+            plt = (plt +
+                   plotnine.scale_color_manual(
+                       values=["black", "red"],
+                       name="Low Model Fit"
+                   ) +
+                   plotnine.geom_hline(
+                       yintercept=threshold
+                   ))
+        return plt
 
     def plot_relative_weight(self,
                              group: Optional[Union[pd.Series, Iterable]] = None,
-                             group_sort: bool = True
+                             group_sort: bool = True,
+                             model_fit: bool = True,
+                             **kwargs
                              ) -> plotnine.ggplot:
         """Plot relative weight of each signature in each sample."""
 
@@ -1759,6 +1832,12 @@ class Decomposition:
             .stack()
             .to_frame("weight")
             .reset_index(names=["sample", "signature"])
+        )
+        # Plotnine by default sorts categorical axis labels. Want to retain the sample
+        # ordering provide, as there is likely some sensible structure in how the user
+        # arranged them.
+        ordered_scale: plotnine.scale_x_discrete = plotnine.scale_x_discrete(
+            limits=rel_df['sample']
         )
         plt: plotnine.ggplot = (
                 plotnine.ggplot(
@@ -1773,7 +1852,22 @@ class Decomposition:
                 plotnine.ylab("Relative Weight") +
                 plotnine.scale_fill_manual(self.colors,
                                            name="Signature") +
-                plotnine.theme(axis_text_x=plotnine.element_text(angle=90))
+                plotnine.theme(axis_text_x=plotnine.element_text(angle=90),
+                               legend_position="bottom",
+                               legend_title_align="center")
+        )
+        # There are two optional components to this plot, a point indicating model
+        # fit, and a ribbon indicating category membership. These are made separately
+        # and the patchworked together. The plot object are initialised to None,
+        # and set to a ggplot if requested
+        plt_ribbon: Optional[plotnine.ggplot] = None
+        plt_mfp: Optional[plotnine.ggplot] = None
+        small_yaxis_lbls: plotnine.theme = plotnine.theme(
+            axis_text_y=plotnine.element_text(size=5),
+            axis_title_y=plotnine.element_text(size=7)
+        )
+        small_xaxis_lbls: plotnine.theme = plotnine.theme(
+            axis_text_x=plotnine.element_text(size=5),
         )
 
         # Display categorical grouping as geom_tile - similar to the ribbon in
@@ -1786,8 +1880,13 @@ class Decomposition:
                 .to_frame("group")
                 .reset_index(names=["sample"])
             )
+            # Sort primarily by group, but beyond that retain input ordering
+            group_df['input_order'] = range(group_df.shape[0])
+            group_df = group_df.sort_values(by=['group', 'input_order'],
+                                            ascending=[True, True])
+            # Replace the input ordering to group instead by
             ordered_scale: plotnine.scale_x_discrete = (
-                plotnine.scale_x_discrete(limits=group.index.tolist())
+                plotnine.scale_x_discrete(limits=group_df['sample'])
             )
             plt_ribbon: plotnine.ggplot = (
                     plotnine.ggplot(group_df,
@@ -1809,24 +1908,54 @@ class Decomposition:
                                    axis_ticks_minor_y=plotnine.element_blank()
                                    )
             )
-            # Remove the x-axis text from the fit plot
-            plt = (
-                    plt +
-                    plotnine.theme(
-                        axis_text_x=plotnine.element_blank(),
-                        axis_ticks_major_x=plotnine.element_blank(),
-                        axis_ticks_minor_x=plotnine.element_blank(),
-                        axis_title_x=plotnine.element_blank()
-                    ) +
-                    ordered_scale
+        if model_fit:
+            plt_mfp = self.plot_modelfit_point(**kwargs)
+            # Remove x-labels and legend
+            plt_mfp = (
+                plt_mfp +
+                plotnine.theme(axis_title_x=plotnine.element_blank(),
+                               axis_ticks_minor_x=plotnine.element_blank(),
+                               axis_ticks_major_y=plotnine.element_blank(),
+                               axis_text_x=plotnine.element_blank()) +
+                plotnine.guides(color=None) +
+                small_yaxis_lbls
             )
-            pw_fit = pw.load_ggplot(plt, figsize=(6, 4))
-            pw_cat = pw.load_ggplot(plt_ribbon, figsize=(6, .2))
-            plt = pw.vstack(pw_cat, pw_fit,
-                            adjust_height=False,
-                            direction="t",
-                            margin="none")
-        return plt
+            if ordered_scale is not None:
+                plt_mfp = plt_mfp + ordered_scale
+
+        if any(x is not None for x in (plt_mfp, plt_ribbon)):
+            plt = plt + small_xaxis_lbls + small_yaxis_lbls
+            # Compose all the requested elements used patchworklib
+            if plt_ribbon is not None:
+                # Remove the x-axis text from the weight plot
+                plt = (
+                        plt +
+                        plotnine.theme(
+                            axis_text_x=plotnine.element_blank(),
+                            axis_ticks_major_x=plotnine.element_blank(),
+                            axis_ticks_minor_x=plotnine.element_blank(),
+                            axis_title_x=plotnine.element_blank()
+                        ) +
+                        ordered_scale
+                )
+            stack: List = [
+                pw.load_ggplot(plt_mfp, figsize=(6, .5)) if plt_mfp is not None else None,
+                pw.load_ggplot(plt, figsize=(6, 4)),
+                (pw.load_ggplot(plt_ribbon, figsize=(6, .2))
+                 if plt_ribbon is not None else None)
+            ]
+            stack = [x for x in stack[::-1] if x is not None]
+            plt_stack: Optional[pw.Bricks] = None
+            for i in range(1, len(stack)):
+                plt_stack = pw.vstack(
+                    stack[0] if plt_stack is None else plt_stack,
+                    stack[i],
+                    adjust_height=False,
+                    direction="t",
+                    margin="none")
+            return plt_stack
+        else:
+            return plt
 
     def plot_pcoa(self, **kwargs):
         """Ordination of samples.
@@ -1860,13 +1989,19 @@ class Decomposition:
             index=self.h.columns
         )
         pos_df['primary'] = self.primary_signature
+        contained_sigs: List[str] = list(set(self.primary_signature))
+        color_dict: Dict[str, str] = {n: c for n, c in
+                                      dict(zip(self.names, self.colors)).items()
+                                      if n in contained_sigs
+                                      }
         plt: plotnine.ggplot = (
                 plotnine.ggplot(
                     pos_df,
                     plotnine.aes(x="MDS1", y="MDS2", color="primary")
                 ) +
                 plotnine.geom_point() +
-                plotnine.scale_color_manual(values=self.colors,
+                plotnine.scale_color_manual(values=list(color_dict.values()),
+                                            limits=list(color_dict.keys()),
                                             name="Primary Signature")
         )
         return plt
@@ -1923,6 +2058,13 @@ class Decomposition:
                 names=self.names
             ), f)
 
+        # Output feature mapping
+        if self.feature_mapping is not None:
+            self.feature_mapping.to_df().to_csv(
+                out_dir / "feature_mapping.tsv",
+                sep=delim
+            )
+
         # Symlink or write data / parameters
         _write_symlink(path=out_dir / "x.tsv",
                        target=x_path,
@@ -1941,14 +2083,14 @@ class Decomposition:
             plt_path: pathlib.Path = out_dir / plot_fn
             logging.debug("Write decomposition plot: %s", plt_path)
             try:
-                plt_obj: Union[plotnine.ggplot, matplotlib.figure.Figure] = (
+                plt_obj: Union[plotnine.ggplot, matplotlib.figure.Figure, pw.Bricks] = (
                     getattr(self, plot_fn)()
                 )
 
                 if isinstance(plt_obj, plotnine.ggplot):
                     plt_obj.save(plt_path.with_suffix(".pdf"))
                 else:
-                    plt_obj.savefig(plt_path)
+                    plt_obj.savefig(plt_path.with_suffix(".pdf"))
             except Exception as e:
                 # TODO: This is not a great pattern, refine exception catching
                 logging.warning("Failed to save plot %s (%s)",
@@ -2121,6 +2263,13 @@ class Decomposition:
             x=x_mat,
             **xless
         )
+
+        # Feature mapping will not exist for de-novo decompositions
+        if "feature_mapping.tsv" in data:
+            logging.warning(
+                "Feature mappings are present, but are not currently read when loading "
+                "a decomposition from disk")
+            # TODO: Make GenusMapping object from table
 
         # Make Decomposition object
         decomp: Decomposition = Decomposition(

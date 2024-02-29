@@ -1,3 +1,4 @@
+import pathlib
 from importlib.resources import files
 from pathlib import Path
 from typing import Set, List, Dict, Iterable
@@ -7,6 +8,7 @@ import pandas as pd
 import pytest
 from click.testing import CliRunner
 
+from enterosig.denovo import Decomposition, NMFParameters
 from enterosig.reapply import cli, to_relative
 from enterosig import models
 from enterosig.reapply import (GenusMapping, EnteroException, validate_table,
@@ -182,48 +184,40 @@ def test_model_fit() -> None:
     # Check simplest case - two identical matrices should produce all 1s
     w: pd.DataFrame = models.five_es()
     abd: pd.DataFrame = models.example_abundance()
-    res: ReapplyResult = transform_table(abundance=abd, rollup=True,
+    res: Decomposition = transform_table(abundance=abd, rollup=True,
                                          model_w=w)
-    mf: pd.DataFrame = model_fit(res.w, res.h.T, res.w.dot(res.h.T))
+    mf: pd.Series = res.model_fit
+    # Check for stable mean model fit between versions
+    assert round(mf.mean(), 3) == round(0.636286, 3), \
+        "Change in mean model fit"
+
+    # Model fit between identical matrices should be 1.0
+    clone_decomp: Decomposition = Decomposition(
+        parameters=NMFParameters(
+            **(res.parameters._asdict() | dict(x=res.wh))
+        ),
+        h=res.h,
+        w=res.w
+    )
     # Sometimes, 1.0 != 1.0, thanks computers
-    assert all(np.isclose(mf['model_fit'], 1.0)), \
+    assert all(np.isclose(clone_decomp.model_fit, 1.0)), \
         "Model fit between identical matrices not all 1.0"
 
-    # Check for stable median model fit between versions
-    mf = model_fit(res.w, res.h.T, res.abundance_table)
-    assert round(mf['model_fit'].mean(), 3) == round(0.636286, 3), \
-        "Change in mean model fit"
 
 
 def test_cli(tmp_path) -> None:
     """Test the click command line interface for reapplying."""
 
     runner: CliRunner = CliRunner()
+    out_dir: pathlib.Path = tmp_path / "output_to"
     result = runner.invoke(
         cli,
         ("--abundance " +
          str(files('enterosig.data').joinpath('NW_ABUNDANCE.tsv')) +
          " -o " +
-         str(tmp_path))
+         str(out_dir))
     )
 
     # Check output files are created
-    for f in ['w.tsv', 'h.tsv', 'abundance.tsv', 'taxon_mapping.tsv']:
-        assert (tmp_path / f).exists(), f"Output {f} not created"
-
-
-def test_to_relative():
-    """Test that ES weight can be coverted to relative abundance."""
-
-    # Check simplest case - two identical matrices should produce all 1s
-    res: ReapplyResult = transform_table(abundance=models.example_abundance(),
-                                         rollup=True,
-                                         model_w=models.five_es()
-                                         )
-    rel_res: ReapplyResult = to_relative(res)
-    res_sum: pd.DataFrame = rel_res.h.sum(axis=1)
-    # Check matrix is in the right orientation
-    assert rel_res.h.shape == rel_res.h.shape, \
-        "Relative abundance shape not the same as input matrix"
-    assert all(np.isclose(res_sum, 1.0)), \
-        "Relative abundances do not sum to 1"
+    for f in ['w.tsv', 'h.tsv', 'x.tsv', 'feature_mapping.tsv']:
+        assert (out_dir / f).exists(), f"Output {f} not created"

@@ -1,6 +1,7 @@
 """Tests for denovo ES generation."""
 import itertools
 import math
+import os
 import pathlib
 import random
 from typing import List, Dict
@@ -22,41 +23,7 @@ from enterosig.denovo import BicvSplit, BicvFold, bicv, _cosine_similarity, \
 def small_overlap_blocks(scope="session") -> pd.DataFrame:
     """Small overlapping block diagonal matrix with k=4, for use in testing
     de-novo methods."""
-
-    # Matrix dimensions
-    i, j = 100, 100
-    # Rank of matrix (number of blocks)
-    k: int = 3
-
-    # Width of blocks without overlap
-    base_h, tail_h = divmod(i, k)
-    base_w, tail_w = divmod(j, k)
-    # Overlap proportion - proportion of block's base dimension to extend 
-    # block by
-    overlap_proportion: float = 0.25
-    overlap_h: int = math.ceil(base_h * overlap_proportion)
-    overlap_w: int = math.ceil(base_w * overlap_proportion)
-    # Make a randomly filled matrix, multiply by mask matrix which has 0 
-    # or 1 then apply noise (so 0s also have some noise)
-    mask: np.ndarray = np.zeros(shape=(i, j))
-    for ki in range(k):
-        h: int = base_h + tail_h if k == ki else base_h
-        w: int = base_w + tail_w if k == ki else base_w
-        h_start: int = max(0, ki * base_h)
-        h_end: int = min(i, h_start + base_h + overlap_h)
-        w_start = max(0, ki * base_w)
-        w_end: int = min(j, w_start + base_w + overlap_w)
-        mask[h_start:h_end, w_start:w_end] = 1.0
-    block_mat: np.ndarray = np.random.uniform(
-        low=0.0, high=1.0, size=(i, j)) * mask
-    # Apply noise from normal distribution
-    block_mat = block_mat + np.absolute(
-        np.random.normal(loc=0.0, scale=0.1, size=(i, j)))
-    # Convert to DataFrame and add some proper naming for rows/cols
-    return pd.DataFrame(
-        block_mat,
-        index=[f'feat_{i_lab}' for i_lab in range(i)],
-        columns=[f'samp_{j_lab}' for j_lab in range(j)])
+    return models.synthetic_data(100, 100, 0.25, 3)
 
 
 @pytest.fixture
@@ -371,6 +338,38 @@ def test_plot_rank_selection(
     plt = plot_rank_selection(res, exclude=None, geom="box")
     pth = (tmp_path / "test_rank_sel.png")
     plt.save(pth)
+    # Test that the file exists and isn't empty
+    assert pth.exists(), "Plot file not created"
+    assert pth.stat().st_size > 0, "Plot file is empty"
+
+
+def test_plot_model_fit_point(
+        tmp_path: pathlib.Path,
+        small_decomposition
+):
+    matplotlib.pyplot.switch_backend("Agg")
+    plt = small_decomposition.plot_modelfit_point(threshold=0.9, yrange=None)
+    pth = (tmp_path / "test_rank_sel.png")
+    plt.save(pth)
+    # Test that the file exists and isn't empty
+    os.system(f"open {pth}")
+    assert pth.exists(), "Plot file not created"
+    assert pth.stat().st_size > 0, "Plot file is empty"
+
+
+def test_plot_relative_weight(
+        tmp_path: pathlib.Path,
+        small_decomposition
+):
+    matplotlib.pyplot.switch_backend("Agg")
+    # Want to plot a category with it
+    rnd_cat: pd.Series = pd.Series(
+        np.random.choice(["A", "B"], size=small_decomposition.h.shape[1]),
+        index=small_decomposition.h.columns
+    )
+    plt = small_decomposition.plot_relative_weight(group=rnd_cat, model_fit=True)
+    pth = (tmp_path / "test_rank_sel.png")
+    plt.savefig(pth)
     # Test that the file exists and isn't empty
     assert pth.exists(), "Plot file not created"
     assert pth.stat().st_size > 0, "Plot file is empty"
