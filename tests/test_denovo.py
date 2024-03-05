@@ -4,6 +4,7 @@ import math
 import os
 import pathlib
 import random
+import re
 from typing import List, Dict
 
 from click.testing import CliRunner
@@ -612,9 +613,33 @@ def test_save_load_decompositions(small_decompositions_random,
     )
     are_decompositions_close(small_decompositions_random, loaded)
 
+
 def test_load(small_decomposition: Decomposition,
               tmp_path: pathlib.Path):
     """Can a single decomposition be loaded successfully?"""
     small_decomposition.save(tmp_path / "saved_decomp")
     loaded: Decomposition = Decomposition.load(tmp_path / "saved_decomp")
     is_decomposition_close(small_decomposition, loaded)
+
+    # We should also be able to provide a string path for saving, and should be able
+    # to load from compressed form
+    path_str: pathlib.Path = tmp_path / "save_string"
+    path_targz: pathlib.Path = path_str.with_suffix(".tar.gz")
+    small_decomposition.save(str(path_str), compress=True)
+    assert path_targz.exists(), "Compressed decomposition output not created."
+    loaded_comp: Decomposition = Decomposition.load(str(path_targz))
+    is_decomposition_close(small_decomposition, loaded_comp)
+
+def test_colors(small_overlap_blocks):
+    """Check default colours get set correctly."""
+
+    # Was an issue with colours for rank 7 decomposition being garbled.
+    matplotlib.pyplot.switch_backend("Agg")
+    k7: Decomposition = decompositions(
+        small_overlap_blocks, random_starts=1, ranks=[7])[7][0]
+    hex_reg: re.Pattern = re.compile(r'^#[A-Fa-f0-9]{6}$')
+    assert len(k7.colors) == 7, "Incorrect number of colors set"
+    # Each colour should be a hex code
+    assert all(hex_reg.match(x) is not None for x in k7.colors), \
+        "Expected all default colors to be hex codes (i.e. #000fff)"
+

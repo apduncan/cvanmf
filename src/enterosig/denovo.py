@@ -1408,7 +1408,7 @@ class Decomposition:
         # blindness, https://www.nature.com/articles/nmeth.1618 via
         # https://davidmathlogic.com/colorblind
         ['#E69F00', '#56B4E9', '#009E73', '#F0E442', '#0072B2',
-         '#D55E00', '#CC79A7' '#000000'],
+         '#D55E00', '#CC79A7', '#000000'],
         # Sarah Trubetskoy's 20 distinct colours
         # https://sashamaps.net/docs/resources/20-colors/
         ['#e6194B', '#3cb44b', '#ffe119', '#4363d8', '#f58231', '#911eb4',
@@ -2007,7 +2007,7 @@ class Decomposition:
         return plt
 
     def save(self,
-             out_dir: pathlib.Path,
+             out_dir: Union[str, pathlib.Path],
              compress: bool = False,
              param_path: Optional[pathlib.Path] = None,
              x_path: Optional[pathlib.Path] = None,
@@ -2031,6 +2031,7 @@ class Decomposition:
         :param symlink: Make symlinks ot param_path and x_path if possible.
         :param delim: Delimiter to used for tabular output."""
 
+        out_dir = pathlib.Path(out_dir)
         logging.debug("Create decomposition output dir: %s", out_dir)
         out_dir.mkdir(parents=True, exist_ok=False)
 
