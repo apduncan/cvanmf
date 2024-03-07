@@ -6,11 +6,11 @@
 import os
 import sys
 
-sys.path.insert(0, os.path.abspath('../src/enterosig'))
+sys.path.insert(0, os.path.abspath('../src/cvanmf'))
 
 # -- Project information -----------------------------------------------------
 
-project = u"enterosig"
+project = u"cvanmf"
 copyright = u"2023, Anthony Duncan"
 author = u"Anthony Duncan"
 
@@ -26,7 +26,7 @@ extensions = [
     "sphinx.ext.viewcode",
     "sphinx_click"
 ]
-autoapi_dirs = ["../src/enterosig"]
+autoapi_dirs = ["../src/cvanmf"]
 autoapi_options = ['members', 'undoc-members', 'show-inheritance',
                    'show-module-summary', 'imported-members']
 autoapi_member_order = 'groupwise'

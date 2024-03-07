@@ -8,11 +8,12 @@ import pandas as pd
 import pytest
 from click.testing import CliRunner
 
-from enterosig.denovo import Decomposition, NMFParameters
-from enterosig.reapply import cli, to_relative
-from enterosig import models
-from enterosig.reapply import (GenusMapping, EnteroException, validate_table,
-                               match_genera, nmf_transform, transform_table, ReapplyResult, model_fit)
+from cvanmf.denovo import Decomposition, NMFParameters
+from cvanmf.reapply import cli, to_relative
+from cvanmf import models
+from cvanmf.reapply import (GenusMapping, EnteroException, validate_table,
+                            match_genera, nmf_transform, transform_table,
+                            ReapplyResult, model_fit)
 
 
 def test_genus_mapping() -> None:
@@ -213,7 +214,7 @@ def test_cli(tmp_path) -> None:
     result = runner.invoke(
         cli,
         ("--abundance " +
-         str(files('enterosig.data').joinpath('NW_ABUNDANCE.tsv')) +
+         str(files('cvanmf.data').joinpath('NW_ABUNDANCE.tsv')) +
          " -o " +
          str(out_dir))
     )

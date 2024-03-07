@@ -18,9 +18,9 @@ def five_es() -> pd.DataFrame:
     logging.info("If you use this model please cite Frioux et al. "
                  "(2023, https://doi.org/10.1016/j.chom.2023.05.024)")
 
-    # with resources.path("enterosig.data", "ES5_W.tsv") as f:
+    # with resources.path("cvanmf.data", "ES5_W.tsv") as f:
     return pd.read_csv(
-        str(files("enterosig.data").joinpath("ES5_W.tsv")),
+        str(files("cvanmf.data").joinpath("ES5_W.tsv")),
         sep="\t",
         index_col=0
     )
@@ -33,7 +33,7 @@ def five_es_x() -> pd.DataFrame:
     :rtype: pd.DataFrame
     """
     return pd.read_csv(
-        str(files("enterosig.data").joinpath("ES5_X.tsv")),
+        str(files("cvanmf.data").joinpath("ES5_X.tsv")),
         sep="\t",
         index_col=0
     )
@@ -46,7 +46,7 @@ def example_abundance() -> pd.DataFrame:
     :rtype: pd.DataFrame
     """
     return pd.read_csv(
-        str(files("enterosig.data").joinpath("NW_ABUNDANCE.tsv")),
+        str(files("cvanmf.data").joinpath("NW_ABUNDANCE.tsv")),
         sep="\t",
         index_col=0
     )

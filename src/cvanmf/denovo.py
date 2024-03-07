@@ -44,7 +44,7 @@ from sklearn.decomposition._nmf import _beta_divergence
 from sklearn.metrics.pairwise import cosine_similarity
 from tqdm import tqdm
 
-import enterosig.reapply as reapply
+import cvanmf.reapply as reapply
 
 # Type aliases
 # BicvSplit = List[pd.DataFrame]

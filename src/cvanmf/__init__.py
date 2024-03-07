@@ -4,6 +4,6 @@ etc etc
 """
 # read version from installed package
 from importlib.metadata import version
-__version__ = version("enterosig")
+__version__ = version("cvanmf")
 
-from enterosig.reapply import reapply
+from cvanmf.reapply import reapply

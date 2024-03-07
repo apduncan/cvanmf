@@ -40,7 +40,7 @@ If you are proposing a feature:
 
 ## Get Started!
 
-Ready to contribute? Here's how to set up `enterosig` for local development.
+Ready to contribute? Here's how to set up `cvanmf` for local development.
 
 1. Download a copy of `enterosig` locally.
 2. Install `enterosig` using `poetry`:

@@ -21,7 +21,7 @@ import pandas as pd
 from sklearn.decomposition import non_negative_factorization
 from sklearn.metrics.pairwise import cosine_similarity
 
-from enterosig import models, denovo
+from cvanmf import models, denovo
 
 # Compile regular expressions
 RE_RANK: re.Pattern = re.compile("[a-zA-Z]__")
@@ -682,8 +682,8 @@ def transform_table(abundance: pd.DataFrame,
     The new data must be annotated against the same taxonomy the model uses.
     Currently this is GTDB r207 for the 5 Enterosignatures model.
     Taxon names will be automatically matched between the abundance table and
-    model where possible, (see :func:`enterosig.transform.match_genera`).
-    Most of the work is done in :func:`enterosig.transform.transform_table`,
+    model where possible, (see :func:`cvanmf.transform.match_genera`).
+    Most of the work is done in :func:`cvanmf.transform.transform_table`,
     this mostly provides convenience of allowing parameters to be paths or
     dataframes etc.
 

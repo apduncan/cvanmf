@@ -14,8 +14,8 @@ import pandas as pd
 import plotnine
 import pytest
 
-from enterosig import models
-from enterosig.denovo import BicvSplit, BicvFold, bicv, _cosine_similarity, \
+from cvanmf import models
+from cvanmf.denovo import BicvSplit, BicvFold, bicv, _cosine_similarity, \
     rank_selection, BicvResult, plot_rank_selection, decompose, NMFParameters, \
     decompositions, Decomposition, cli_rank_selection
 

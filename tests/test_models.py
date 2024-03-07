@@ -2,7 +2,7 @@
 import numpy as np
 import pandas as pd
 
-from enterosig import models
+from cvanmf import models
 
 
 def test_five_es() -> None:
