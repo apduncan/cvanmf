@@ -1,17 +1,27 @@
 #!/usr/bin/env python
+"""
+Reapply existing Enterosignature models to new abundance data.
 
-import os
+The easiest way to do this is through the :func:`reapply` function, which is
+most flexible about parameter types. The other functions perform individual
+steps, which are useful if you want fine control of a given step, but
+probably not necessary for most uses.
+"""
+
 import logging
-import sys
+import os
+import pathlib
+import re
 from typing import (Any, Callable, Collection, Dict, Iterator, List, NamedTuple,
                     Optional, Set, Tuple, Union)
-import re
 
 import click
-from sklearn.decomposition import non_negative_factorization
-from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
 import pandas as pd
+from sklearn.decomposition import non_negative_factorization
+from sklearn.metrics.pairwise import cosine_similarity
+
+from cvanmf import models, denovo
 
 # Compile regular expressions
 RE_RANK: re.Pattern = re.compile("[a-zA-Z]__")
@@ -19,27 +29,39 @@ RE_SPLIT_GENUS: re.Pattern = re.compile(r"([\w]+)_\w$")
 # Match the last named rank, plus any following ?s
 RE_SHORTEN: re.Pattern = re.compile(r".*;([^\;?]+[;\?]*)$")
 
-# URLS
-URL_5ES: str = "https://raw.githubusercontent.com/apduncan/enterosig_sl/main/data/ES5_W.tsv"
-
-# Instantiate logger
-logging.basicConfig(
-    format='%(levelname)s [%(asctime)s]: %(message)s',
-    datefmt='%d/%m/%Y %I:%M:%S',
-    level=logging.DEBUG
-)
 
 class EnteroException(Exception):
     """Exception raised when unable to proceed with enterosignature 
     transformation"""
 
-class GenusMapping():
-    """Manage the mappings from input genus to ES genus."""
 
-    def __init__(self, 
+class GenusMapping():
+    """Connect new abundance table taxa to those in the model.
+
+    Manage the mappings from input genus to ES genus. Source taxa are the
+    taxa in the new abunance table we want to fit to the model; target taxa are
+    the taxa in the model we're trying to match to. User defined mappings
+    can be provided via `hard_map`, any subsequent mappings for a source taxon
+    in `hard_map` will be ignored. New mappings are added via :meth:`add`. When
+    mappings are fully defined the model w matrix and the new abundance table
+    can be matched using :meth:`transform_w` and :meth:`transform_abundance`
+
+    """
+
+    def __init__(self,
                  target_taxa: Set[str],
                  source_taxa: Set[str],
-                 hard_map: Optional[Dict[str, str]] = {}):
+                 hard_map: Optional[Dict[str, str]] = None):
+        """
+        :param target_taxa: Model taxa to map to
+        :type target_taxa: Set[str]
+        :param source_taxa: Input taxa to be mapped from
+        :type source_taxa: Set[str]
+        :param hard_map: User defined mappings, as a dictionary with source
+            as key and target as value.
+        :type hard_map: Optional[Dict[str, str]]
+        """
+
         # hard_map are user provided mappings which will never be altered
         self.__target_taxa = target_taxa
         self.__source_taxa = source_taxa
@@ -48,28 +70,40 @@ class GenusMapping():
 
     def add(self, genus_from: str, genus_to: str) -> None:
         """Add a mapping. If there is already a mapping from this genus, we 
-        will append this one. Use the conflicts() method to resolve where 
-        more than one mapping exists"""
+        will append this one. Use :meth:`conflicts` to identify where more than
+        one mapping exists.
+
+        :param genus_from: Taxon in the new abundance table
+        :type genus_from: str
+        :param genus_to: Model taxon to map to
+        :type genus_to: str
+        :raises EnteroException: Taxa not in the relevant sets
+        """
         # If user has provided a hard mapping, ignore this mapping
         if genus_from in self.__hard_map:
             return
         # If the genus being mapped to is not valid, raise an exception
         if genus_to not in self.__target_taxa:
             raise EnteroException(f"Mapping of '{genus_from}' to target " + \
-                f"'{genus_to}' not possible as target does not exist.")
+                                  f"'{genus_to}' not possible as target does not exist.")
         if genus_from not in self.__source_taxa:
-             raise EnteroException(f"Mapping of '{genus_from}' to target " + \
-                f"'{genus_to}' not possible as source does not exist.")
+            raise EnteroException(f"Mapping of '{genus_from}' to target " + \
+                                  f"'{genus_to}' not possible as source does not exist.")
         if genus_from not in self.__map:
             self.__map[genus_from] = [genus_to]
         else:
             self.__map[genus_from].append(genus_to)
 
     def to_df(self) -> pd.DataFrame:
-        """Write the mapping used to TSV format. Where mappings are amibiguous, 
-        multiple rows will be included. Where mappings are missing, on row with 
-        a blank target will be included."""
-        
+        """Produce a dataframe of the mapping. Where mappings are amibiguous,
+        multiple rows will be included. Where mappings are missing, one row with
+        a blank target will be included.
+
+        :return: DataFrame with two columns, first source taxon, second target
+            taxon.
+        :rtype: pd.DataFrame
+        """
+
         # Could be more nicely done with some maps, but take a simple approach
         df_src: List[Tuple[str, str]] = []
         for source, targets in self.mapping.items():
@@ -83,31 +117,58 @@ class GenusMapping():
         return df
 
     def missing(self) -> Collection[str]:
-        """Identify input taxa which currently have no mapping"""
+        """Identify input taxa which currently have no mapping.
+
+        :return: Source taxa which are not mapping to any model taxa
+        :rtype: Collection[str]
+        """
         return self.__source_taxa.difference(set(self.mapping.keys()))
 
     def transform_abundance(self, abd_tbl: pd.DataFrame) -> pd.DataFrame:
-        """Make an abundance table with renamed and combined rows based on the 
-        identified mappings."""
+        """Applying mapping to the input abundance table.
+
+        Make an abundance table with renamed and combined rows based on the
+        identified mappings.
+
+        :param abd_tbl: New abundance table, samples on columns
+        :type abd_tbl: pd.DataFrame
+        :return: Abundanece table with mappings applied
+        :rtype: pd.DataFrame
+        """
+
         # Probably we could do some smarter changes and groupbys
         # TODO(apduncan): Refactor, slow and ugly
+        abd: pd.DataFrame = abd_tbl.copy()
         for input_taxon, es_maps in self.mapping.items():
             # Where there are conflicting mappings, use the first one
             es_map = es_maps[0]
             if input_taxon == es_map:
                 continue
             # Add or sum
-            if es_map not in abd_tbl.index:
-                abd_tbl.loc[es_map] = abd_tbl.loc[input_taxon]
+            if es_map not in abd.index:
+                abd.loc[es_map] = abd.loc[input_taxon]
             else:
-                abd_tbl.loc[es_map] += abd_tbl.loc[input_taxon]
-            abd_tbl = abd_tbl.drop(labels=[input_taxon])
-        return abd_tbl
+                abd.loc[es_map] += abd.loc[input_taxon]
+            abd = abd.drop(labels=[input_taxon])
+        return abd
 
     def transform_w(self,
-                    w: pd.DataFrame, 
+                    w: pd.DataFrame,
                     abd_tbl: pd.DataFrame) -> pd.DataFrame:
-        """Make a W matrix which has rows added for missing taxa."""
+        """Match the model w matrix to the new abundance table.
+
+        Make a W matrix which has taxa not in the abundance table removed,
+        and rows added for taxa which are in the abundance table but not the
+        model.
+
+        :param w: Model W matrix
+        :type w: pd.DataFrame
+        :param abd_tbl: New abundance matrix. Should `not` have been transformed
+            with :meth:`transform_abundance`.
+        :type abd_tbl: pd.DataFrame
+        :return: W matrix matched to new abundane table
+        :rtype: pd.DataFrame
+        """
         w_new: pd.DataFrame = w.copy()
         # Drop taxa which are not in the input matrix from the W matrix
         w_tax: Set[str] = set(w_new.index)
@@ -116,33 +177,43 @@ class GenusMapping():
         missing_taxa: Set[str] = set(abd_tbl.index).difference(w_tax)
         missing_df: pd.DataFrame = pd.DataFrame(
             np.zeros(shape=[len(missing_taxa), w.shape[1]]),
-            index = list(missing_taxa),
-            columns = w.columns
+            index=list(missing_taxa),
+            columns=w.columns
         )
         w_new = pd.concat([w_new, missing_df])
         return w_new
 
     @property
     def conflicts(self) -> List[Tuple[str, List[str]]]:
-        """Genera for which more than one target exists"""
+        """Genera for which more than one target exists."""
         return list(filter(lambda x: len(x[1]) > 1, self.mapping.items()))
 
     @property
     def mapping(self) -> Dict[str, List[str]]:
-        return self.__map
+        """Mapping from source to target taxa."""
+        return {**self.__map, **{x: [y] for x, y in self.__hard_map.items()}}
 
-class TransformResult(NamedTuple):
-    """Return named results from transformation process"""
+
+class ReapplyResult(NamedTuple):
+    """A named tuple containing results from transformation process."""
     w: pd.DataFrame
+    """Model weights with index matched to input abundances."""
     h: pd.DataFrame
+    """Enterosignature weights for each sample. Not these are not relative
+    (do not sum to 1 per sample)."""
     abundance_table: pd.DataFrame
+    """Abundances generated by matching input abundance taxa to taxa in the 
+    model weights."""
     model_fit: pd.DataFrame
+    """Model fit for each sample, ranging from 1 (good) to 0 (poor)."""
     taxon_mapping: GenusMapping
-    w_norm: Optional[pd.DataFrame] = None
-    h_norm: Optional[pd.DataFrame] = None
+    """Object defining how input abundance taxa were mapped to model taxa, 
+    of type :class:`GenusMapping`."""
+
 
 def _console_logger(message: Any) -> None:
     logging.info(message)
+
 
 def _is_taxon_unknown(taxon: str) -> bool:
     # Remove ?, if all entries in lineage blank, the is unknown
@@ -153,6 +224,7 @@ def _is_taxon_unknown(taxon: str) -> bool:
         )
     )
 
+
 def _contain_rank_indicators(taxon: str) -> bool:
     # Check if this taxonomy contains rank indicators
     return any(map(
@@ -160,11 +232,12 @@ def _contain_rank_indicators(taxon: str) -> bool:
         taxon.split(';')
     ))
 
+
 def _shorten_genus(
         genus: str,
-        genera_list: Collection[str], 
+        genera_list: Collection[str],
         short_genera_list: Collection[str]
-        ) -> str:
+) -> str:
     # Copying the operation of Clemence's shorten_genus function
     # Get last named rank, and subsequent ?
     # Genera list should the genera list, but with RE_SHORTEN applied, not 
@@ -184,17 +257,20 @@ def _shorten_genus(
             final_shorten = ";".join(genus.split(";")[-2:])
         else:
             final_shorten = shorten2
-    return final_shorten 
+    return final_shorten
+
 
 def _final_rank(taxon: str) -> str:
     # Exctract final non-blank or ? rank
     return next(filter(
-        lambda x: len(x.strip()) != 0, 
+        lambda x: len(x.strip()) != 0,
         reversed(taxon.replace("?", "").split(';'))
     ))
 
+
 def _final_rank_equal(a: str, b: str) -> bool:
     return _final_rank(a) == _final_rank(b)
+
 
 def _pad_lineage(
         taxon: str,
@@ -203,6 +279,7 @@ def _pad_lineage(
         unknown: str = "") -> str:
     """Pad lineage out to the expected length using delimiters. Default is to
     genus level.
+
     :param str taxon: Lineage string for taxon
     :param str delim: Delimiter between ranks
     :param int length: Rank to truncate to
@@ -221,6 +298,7 @@ def _pad_lineage(
     ))
     return delim.join(lineage_parts)
 
+
 def validate_table(abd_tbl: pd.DataFrame,
                    logger: Callable[[Any], None] = _console_logger
                    ) -> pd.DataFrame:
@@ -230,11 +308,14 @@ def validate_table(abd_tbl: pd.DataFrame,
     transformation will be written out to inform the user. Transformations are 
     done in place.
     
-    :param pd.DataFrame abd_tbl: Abundance table to check
-    :param Callable[[str], None]: Function to report errors
+    :param abd_tbl: Abundance table to check
+    :type abd_tbl: pd.DataFrame
+    :param logger: Function to report errors
+    :type logger: Callable[[str], None]
     :returns: Validated, potentially transformed, dataframe
     :rtype: pd.DataFrame
     """
+
     # Check the dimensions make sense
     if abd_tbl.shape[0] < 2 or abd_tbl.shape[1] < 2:
         logger("""Table has one or fewer columns or rows. Check delimiters and
@@ -258,14 +339,14 @@ def validate_table(abd_tbl: pd.DataFrame,
         logger("""Table appears to have taxa on columns, so we have
                  transposed it.""")
         abd_tbl = abd_tbl.T
-    
+
     # Remove ? from lineages, unknown should be blank
     # abd_tbl.index = list(map(lambda x: x.replace("?", ""), abd_tbl.index))
 
     # See if there are rank indicators in the taxa names
     # We'll take a look at the first 10 taxa, and see if they do
     rank_indicated: bool = all(map(_contain_rank_indicators,
-                               abd_tbl.index[:10]))
+                                   abd_tbl.index[:10]))
     if rank_indicated:
         logger("""Taxa names appear to contain rank indicators (i.e k__, p__),
                these have been removed to match Enterosignature format.""")
@@ -301,21 +382,21 @@ def validate_table(abd_tbl: pd.DataFrame,
 
     # Remove any taxa which are completely unknown (all ? or blank)
     bad_taxa: List = list(filter(_is_taxon_unknown, abd_tbl.index))
-    abd_tbl = abd_tbl.drop(labels = bad_taxa)
+    abd_tbl = abd_tbl.drop(labels=bad_taxa)
     if len(bad_taxa) > 0:
         logger(f"Removed {len(bad_taxa)} unknown taxa: {bad_taxa}")
 
-    # Remove and taxa which had 0 observations, and samples for which 0
+    # Remove any taxa which had 0 observations, and samples for which 0
     # taxa were observed (unlikely but check)
-    zero_taxa: List = list(abd_tbl.loc[abd_tbl.sum(axis = 1) == 0].index)
+    zero_taxa: List = list(abd_tbl.loc[abd_tbl.sum(axis=1) == 0].index)
     zero_samples: List = list(
-        abd_tbl.loc[:, abd_tbl.sum(axis = 0) == 0].columns)
+        abd_tbl.loc[:, abd_tbl.sum(axis=0) == 0].columns)
     if len(zero_taxa) > 0:
-        abd_tbl = abd_tbl.drop(labels = zero_taxa)
+        abd_tbl = abd_tbl.drop(labels=zero_taxa)
         logger(
             f"Dropped {len(zero_taxa)} taxa with no observations: {zero_taxa}")
     if len(zero_samples) > 0:
-        abd_tbl = abd_tbl.drop(columns = zero_samples)
+        abd_tbl = abd_tbl.drop(columns=zero_samples)
         logger(
             f"Dropped {len(zero_samples)} sample with no observations")
 
@@ -324,17 +405,18 @@ def validate_table(abd_tbl: pd.DataFrame,
 
     return abd_tbl
 
+
 def match_genera(
         es_w: pd.DataFrame,
         abd_tbl: pd.DataFrame,
-        hard_mapping: Optional[Dict[str, str]] = {},
+        hard_mapping: Optional[Dict[str, str]] = None,
         family_rollup: bool = True,
         logger: Callable[[Any], None] = _console_logger
-        ) -> Tuple[pd.DataFrame, pd.DataFrame, GenusMapping]:
+) -> Tuple[pd.DataFrame, pd.DataFrame, GenusMapping]:
     """Match taxonomic names in the input table and the Enterosignatures W 
     matrix.
     
-    This function is currently based on the R script provided by Clemence in 
+    This function is currently based on the R script provided by Clemence in
     the Enterosignatures (ES) gitlab repo (prepare_matrices.R)
     https://gitlab.inria.fr/cfrioux/enterosignature-paper/. 
     This will attempt to match names, but if any input names cannot be matched 
@@ -342,14 +424,21 @@ def match_genera(
     to be manually corrected. Mappings in the mapping parameter are new to ES 
     names, and will be applied before any other matches identified.
     
-    :param pd.DataFrame es_w: Enterosignatures W matrix
-    :param pd.DataFrame abd_tbl: Abundance table being transformed
-    :mapping Dict[str, str] mapping: Mapping from input to ES name
-    :logger Callable[[Any], None]: Function to log messages
-    :returns: Transformed ES W matrix, abundace table, and unmatched names
+    :param es_w: Enterosignatures W matrix
+    :type es_w: pd.DataFrame
+    :param abd_tbl: Abundance table being transformed
+    :type abd_tbl: pd.DataFrame
+    :param mapping: Mapping from input to ES name
+    :type mapping: Dict[str, str]
+    :param logger: Function to log messages
+    :type logger: Callable[[Any], None]
+    :returns: Transformed abundance table, es W matrix, and mapping object
     :rtype: Tuple[pd.DataFrame, pd.DataFrame, List[str]]
     """
 
+    # Set optional parameter values
+    if hard_mapping is None:
+        hard_mapping = dict()
     # Sets of taxa
     es_taxa: Set[str] = set(es_w.index)
     input_taxa: Set[str] = set(abd_tbl.index)
@@ -385,39 +474,39 @@ def match_genera(
     # Homogenise taxa of input matrix and ES
     # This is adapted directly from Clemence's script, and identifies taxa
     # where the lowest known rank matches, but the preceding elements do not
-    es_taxa_short: List[str]    = list(map(
+    es_taxa_short: List[str] = list(map(
         lambda x: RE_SHORTEN.sub(r"\1", x), es_taxa))
-    input_taxa                  = set(unmatched)
+    input_taxa = set(unmatched)
     input_taxa_short: List[str] = list(map(
         lambda x: RE_SHORTEN.sub(r"\1", x), input_taxa))
-    es_only: Set[str]           = es_taxa.difference(input_taxa)
-    input_only: Set[str]        = input_taxa.difference(es_taxa)
+    es_only: Set[str] = es_taxa.difference(input_taxa)
+    input_only: Set[str] = input_taxa.difference(es_taxa)
 
     es_only_genus: Set[str] = set(
         map(lambda x: _shorten_genus(
             x,
             genera_list=es_taxa,
             short_genera_list=es_taxa_short
-            ),
+        ),
             es_only
-        )
+            )
     )
     input_only_genus: Set[str] = set(
         map(lambda x: _shorten_genus(
             x,
             genera_list=input_taxa,
             short_genera_list=input_taxa_short
-            ),
+        ),
             input_only
-        )
+            )
     )
 
     # Which can be merged based on Clemence's critera
     fixable_taxa: Set[str] = es_only_genus.intersection(input_only_genus)
     clemence_merged: Set[str] = set()
     for taxon in fixable_taxa:
-        t_from: List[str]   = list(filter(lambda x: taxon in x, unmatched))
-        t_to: List[str]     = list(filter(lambda x: taxon in x, es_w))
+        t_from: List[str] = list(filter(lambda x: taxon in x, unmatched))
+        t_to: List[str] = list(filter(lambda x: taxon in x, es_w))
         for f in t_from:
             for t in t_to:
                 mapping.add(f, t)
@@ -467,7 +556,7 @@ def match_genera(
            f" any entries in Enterosignatures matrix.")
     logger(f"These unique taxa represent {input_abd_missed:.2f} abundance of" + \
            f" a total {new_abd.sum().sum():.2f} ({input_abd_missed_prop:.2%}).")
-    
+
     # Loss of W weight
     w_total: float = es_w.sum().sum()
     new_w_total: float = new_w.sum().sum()
@@ -476,6 +565,7 @@ def match_genera(
            f"{1 - (new_w_total / w_total):.2%} of ES matrix weight lost due to " + \
            "taxa mismatch.")
     return (new_abd, new_w, mapping)
+
 
 def model_fit(
         w: pd.DataFrame,
@@ -487,12 +577,19 @@ def model_fit(
     Model fit is a measure of how well the input data for a sample can be 
     fit to the feature weights in the decomposition. Model fit is measured as 
     cosine similarity between taxon abundances in input matrix X, and taxon 
-    abundances in model product WH.
+    abundances in model product WH. Cosine similarity ranges between 1 (good
+    fit) and 0 (poor fit) for this case. While cosine similaity can be negative,
+    without our non-negativity constraint it will fall in the range 0 to 1.
     
-    :param pd.DataFrame w: Taxon weight matrix (taxa x ES)
-    :param pd.DataFrame h: Sample ES weight matrix (ES x sample)
-    :param pd.DataFrame x: Input abundances. Here this will be output of 
-                            match_genera"""
+    :param w: Taxon weight matrix (taxa x ES)
+    :type w: pd.DataFrame
+    :param h: Sample ES weight matrix (ES x sample)
+    :type h: pd.DataFrame
+    :param x: Input abundances. Here this will be output of
+                            match_genera
+    :return: Cosine similarity between WH and X for each sample
+    :type: pd.DataFrame
+    """
 
     # Obtain product of w x h
     wh: pd.DataFrame = w.dot(h)
@@ -503,10 +600,11 @@ def model_fit(
     # TODO(apduncan): Calculate only desired pairs, rather than full matrix
     cos_sim: pd.DataFrame = pd.DataFrame(
         np.diag(cosine_similarity(wh.T, x.T)),
-        index = wh.T.index,
-        columns = ["model_fit"]
+        index=wh.T.index,
+        columns=["model_fit"]
     )
     return cos_sim
+
 
 def nmf_transform(new_abd: pd.DataFrame,
                   new_w: pd.DataFrame,
@@ -516,76 +614,145 @@ def nmf_transform(new_abd: pd.DataFrame,
     
     Takes the matched up W matrix and abundance tables. Expects the row 
     ordering of W and abundance table to be the same. Any NA values will be 
-    filled with 0."""
+    filled with 0.
+
+    :param new_abd: Genus level abundances
+    :type new_abd: pd.DataFrame
+    :param new_w: Model weights
+    :type new_w: pd.DataFrame
+    :param logger:
+    :type logger: Callable[[Any], None]
+    :return: Enterosignature weights for the given model and abundances,
+        note this is nor relative abundance (do not sum to 1)
+    :rtype: pd.DataFrame
+    """
     h, _, _ = non_negative_factorization(
         new_abd.T.values,
-        n_components    = new_w.shape[1],
-        init            = "custom",  # Must be custom as providing H init
-        verbose         = False,
-        solver          = "mu",
-        max_iter        = 2000,
-        random_state    = None,
-        l1_ratio        = 1,
-        beta_loss       = "kullback-leibler",
-        update_H        = False,
-        H               = new_w.T.values
+        n_components=new_w.shape[1],
+        init="custom",  # Must be custom as providing H init
+        verbose=False,
+        solver="mu",
+        max_iter=2000,
+        random_state=None,
+        l1_ratio=1,
+        beta_loss="kullback-leibler",
+        update_H=False,
+        H=new_w.T.values
     )
     h_df: pd.DataFrame = pd.DataFrame(
         h,
-        index   = new_abd.columns,
-        columns = new_w.columns
+        index=new_abd.columns,
+        columns=new_w.columns
     )
     return h_df
 
-def tss_scale(w: pd.DataFrame,
-              h: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """Scale H and W to sum to 1. Scale W by signature, and H by sample.
 
-    :param w: W matrix
-    :param h: H matrix
-    :rtype: Tuple[pd.DataFrame, pd.DataFrame]
+def to_relative(result: ReapplyResult) -> ReapplyResult:
+    """Covert results to relative abundance
+
+    The output model weights for each sample do not sum to a constant values.
+    For many analyses, you may want to consider the relative weight of each
+    ES in each sample, by scaling so each sample sums to 1 (total sum scaling).
+    This converts the h property to a relative value for each sample.
+    Note when this is applied :math:`W \\times H \\not\\approx X` except in
+    the unlikely case all samples summed close to 1 anyway.
+
+    :param result: Result object
+    :type result: ReapplyResult
+    :returns: New result object with h converted to relative values.
+    :rtype: ReapplyResult
     """
-    w_scale: pd.DataFrame = w / w.sum()
-    h_scale: pd.DataFrame = (h.T / h.sum(axis=1)).T
-    return w_scale, h_scale
+    h_rel: pd.DataFrame = (result.h.T / result.h.T.sum()).T
+    return ReapplyResult(
+        w=result.w, abundance_table=result.abundance_table,
+        model_fit=result.model_fit, taxon_mapping=result.taxon_mapping,
+        h=h_rel
+    )
 
-def transform_table(abd: pd.DataFrame,
-                    family_rollup: bool,
+
+def transform_table(abundance: pd.DataFrame,
                     model_w: pd.DataFrame,
-                    hard_mapping: Dict[str, str],
-                    logger: Callable[[str], None] = _console_logger,
-                    ) -> TransformResult:
-    """Perform all transformation steps, and return all related results"""
+                    hard_mapping: Optional[Dict[str, str]] = None,
+                    rollup: bool = True,
+                    relative_abundance: bool = False,
+                    logger: Callable[[str], None] = _console_logger
+                    ) -> denovo.Decomposition:
+    """Transform abundance DataFrame using model W DataFrame.
 
-    abd_tbl = validate_table(abd, logger=logger)
+    The new data must be annotated against the same taxonomy the model uses.
+    Currently this is GTDB r207 for the 5 Enterosignatures model.
+    Taxon names will be automatically matched between the abundance table and
+    model where possible, (see :func:`cvanmf.transform.match_genera`).
+    Most of the work is done in :func:`cvanmf.transform.transform_table`,
+    this mostly provides convenience of allowing parameters to be paths or
+    dataframes etc.
+
+    :param abundance: Table of genus level abundances to transform
+    :type abundance: pd.DataFrame
+    :param model_w: W matrix of model to use
+    :type model_w: pd.DataFrame
+    :param hard_mapping: Define matchups between taxon identifeiers in abundance
+        and those in model_w. These will be used in preference of any automated
+        matches.
+    :type hard_mapping: Optional[Dict[str, str]]
+    :param rollup: For genera in abundance which have no match in model_w,
+        sum their abundance under the family level entry where available.
+    :param relative_abundance: Whether to convert weights to relative abundance
+        (all samples sum to 1)
+    :type relative_abundance: bool
+    :type rollup: bool
+    """
+
+    abd_tbl: pd.DataFrame = validate_table(abundance, logger=logger)
     new_abd, new_w, mapping = match_genera(
         es_w=model_w, abd_tbl=abd_tbl, logger=logger, hard_mapping=hard_mapping,
-        family_rollup=family_rollup
+        family_rollup=rollup
     )
-    es = nmf_transform(new_abd=new_abd, new_w=new_w, logger=logger)
-    mf = model_fit(w=new_w, h=es.T, x=new_abd)
-    w_tss, h_tss = tss_scale(new_w, es)
-    return TransformResult(w=new_w, h=es, abundance_table=new_abd,
-                           model_fit=mf, taxon_mapping=mapping,
-                           w_norm=w_tss, h_norm=h_tss)
+    es: pd.DataFrame = nmf_transform(new_abd=new_abd, new_w=new_w,
+                                     logger=logger)
+    mf: pd.DataFrame = model_fit(w=new_w, h=es.T, x=new_abd)
+    res: ReapplyResult = ReapplyResult(
+        w=new_w, h=es, abundance_table=new_abd, model_fit=mf,
+        taxon_mapping=mapping)
+    res = to_relative(res) if relative_abundance else res
+    decomp: denovo.Decomposition = denovo.Decomposition(
+        w=new_w, h=es.T, feature_mapping=mapping,
+        parameters=denovo.NMFParameters(
+            x=new_abd,
+            rank=new_w.shape[1],
+            # TODO: Properly implement seeds for refitting
+            seed='Generator',
+        )
+    )
+    return decomp
 
-def transform(abundance: Union[str, pd.DataFrame],
-              model_w: Union[str, pd.DataFrame] = "5es",
-              hard_mapping: Optional[Union[str, pd.DataFrame]] = None,
-              rollup: bool = True,
-              separator: str = "\t",
-              output_dir: Optional[str] = None
-              ) -> TransformResult:
-    """Transform abundances to an existing Enterosignatures model. 
+
+def reapply(abundance: Union[str, pd.DataFrame],
+            model_w: Union[str, pd.DataFrame] = models.five_es(),
+            hard_mapping: Optional[Union[str, pd.DataFrame]] = None,
+            rollup: bool = True,
+            separator: str = "\t",
+            output_dir: Optional[str] = None,
+            relative_abundance: bool = False
+            ) -> denovo.Decomposition:
+    """Load and transform abundances to an existing Enterosignature model.
+
+    The new data must be annotated against the same taxonomy the model uses.
+    Currently this is GTDB r207 for the 5 Enterosignature model. Taxon names
+    will be automatically matched between the abundance table and model where
+    possible, (see :func:`match_genera`). Most of the work is done in
+    :func:`transform_table`, this mostly provides convenience of allowing
+    parameters to be paths or dataframes etc.
 
     :param abundance: Table of genus level abundances to transform. Can be a
         string giving path, or a DataFrame.
     :type abundance: Union[str, pd.DataFrame]
-    :param model_w: W matrix of model to use. Can be the name of a known 
-        matrix, a path to load matrix from, or a DataFrame. The default is the 
-        5ES model of Frioux et al. (2023)
+    :param model_w: W matrix of model to use. Can be a DataFrame, or the path to
+        load matrix from. The default is the 5ES model of Frioux et al.
+        (2023, https://doi.org/10.1016/j.chom.2023.05.024). Other models,
+        once available, can be loaded via the models module.
     :type model_w: Union[str, pd.DataFrame]
-    :param hard_mapping: Define matchups between taxon identifeiers in abundance
+    :param hard_mapping: Define matchups between taxon identifiers in abundance
         and those in model_w. These will be used in preference of any automated 
         matches. Should be a table with index being abundance identifier, 
         and first column the model_w identifier. Can be either a path, or 
@@ -599,6 +766,12 @@ def transform(abundance: Union[str, pd.DataFrame],
     :param output_dir: Directory to write results to. Directory will be created 
         if it does not exist. Pass None for no output to disk.
     :type output_dir: Optional[str]
+    :param relative_abundance: Whether to convert weights to relative abundance
+        (all samples sum to 1). Note that if using relative abundance,
+        product of w and h no longer approximates input.
+    :type relative_abundance: bool
+    :returns: Multiple results, see :class:`ReapplyResult`
+    :rtype: ReapplyResult
     """
 
     # Load files if required
@@ -607,7 +780,7 @@ def transform(abundance: Union[str, pd.DataFrame],
         abundance_df = pd.read_csv(abundance, sep=separator, index_col=0)
     else:
         abundance_df = abundance
-    
+
     # Load model
     w_df: pd.DataFrame
     if isinstance(model_w, str):
@@ -615,9 +788,7 @@ def transform(abundance: Union[str, pd.DataFrame],
         # Check for known models
         if model_w == "5es":
             logging.info("Loading 5ES model from GitLab")
-            w_df = pd.read_csv(
-                 URL_5ES, sep="\t", index_col=0
-            )
+            w_df = models.five_es()
         else:
             logging.info("Loading model from %s", model_w)
             w_df = pd.read_csv(
@@ -627,7 +798,6 @@ def transform(abundance: Union[str, pd.DataFrame],
         w_df = model_w
 
     # Load hard mapping
-    # TODO(apduncan): Properly check hard mapping is working
     mapping_dict: Dict[str, str]
     if hard_mapping is not None:
         if isinstance(hard_mapping, str):
@@ -637,23 +807,19 @@ def transform(abundance: Union[str, pd.DataFrame],
     else:
         mapping_dict = {}
 
-    res: TransformResult = transform_table(
-        abd=abundance_df,
-        family_rollup=rollup,
+    res: denovo.Decomposition = transform_table(
+        abundance=abundance_df,
+        rollup=rollup,
         model_w=w_df,
-        hard_mapping=mapping_dict
+        hard_mapping=mapping_dict,
+        relative_abundance=relative_abundance
     )
 
     if output_dir is not None:
-        os.makedirs(output_dir, exist_ok=True)
-        res.w.to_csv(os.path.join(output_dir, "w.tsv"))
-        res.h.to_csv(os.path.join(output_dir, "h.tsv"))
-        res.abundance_table.to_csv(os.path.join(output_dir, "abundance.tsv"))
-        res.model_fit.to_csv(os.path.join(output_dir, "taxon_mapping.tsv"))
-        res.w_norm.to_csv(os.path.join(output_dir, "w_norm.tsv"))
-        res.h_norm.to_csv(os.path.join(output_dir, "h_norm.tsv"))
-    
+        res.save(out_dir=pathlib.Path(output_dir), delim=separator)
+
     return res
+
 
 @click.command()
 @click.option("-a",
@@ -663,39 +829,38 @@ def transform(abundance: Union[str, pd.DataFrame],
               help="""Genus level relative abundance table, with genera on rows
               and samples on columns.""")
 @click.option("-m",
-               "--model_w",
-               required=False,
-               type=click.Path(exists=True, dir_okay=False),
-               help="""Enterosignature W matrix. If not provided, attempts to 
+              "--model_w",
+              required=False,
+              type=click.Path(exists=True, dir_okay=False),
+              help="""Enterosignature W matrix. If not provided, attempts to 
                find or download the 5 ES model matrix""")
 @click.option("-h",
-               "--hard_mapping",
-               required=False,
-               type=click.Path(exists=True, dir_okay=False),
-               help="""Mapping between taxa in abdundance table and ES W matrix.
+              "--hard_mapping",
+              required=False,
+              type=click.Path(exists=True, dir_okay=False),
+              help="""Mapping between taxa in abdundance table and ES W matrix.
                Provide as a csv, with first column taxa in input table, second 
                column the name in ES W to map to.""")
 @click.option("--rollup/--no-rollup",
-               default=True,
-               help="""For genera in abundance table which do not match the 
+              default=True,
+              help="""For genera in abundance table which do not match the 
                ES W matrix, add their abundance to a family level entry if one 
                exists.""")
 @click.option("-s", "--separator",
-               default="\t", type=str,
-               help="""Separator used in input files.""")
+              default="\t", type=str,
+              help="""Separator used in input files.""")
 @click.option("-o", "--output_dir",
               required=True, type=click.Path(file_okay=False),
               help="""Directory to write output to.""")
 def cli(abundance: str,
-              model_w: str,
-              hard_mapping: str,
-              rollup: bool,
-              separator: str,
-              output_dir: str) -> None:
-    """Fit new data to an existing Enterosignatures model. The new data must
-    be annotated against the same taxonomy the model uses. Currently this is
-    GTDB r207 for the 5 Enterosignatures model. Source for this tool available
-    at https://github.com/apduncan/enterosig_sl.
+        model_w: str,
+        hard_mapping: str,
+        rollup: bool,
+        separator: str,
+        output_dir: str) -> None:
+    """Command line interfrace to fit new data to an existing Enterosignatures
+    model. The new data must be annotated against the same taxonomy the model
+    uses. Currently this is GTDB r207 for the 5 Enterosignatures model.
     
     For more on Enterosignatures see:
 
@@ -703,45 +868,16 @@ def cli(abundance: str,
 
     *  https://enterosignatures.quadram.ac.uk
     """
-    # Load files
-    abundance_df = pd.read_csv(abundance, sep=separator, index_col=0)
 
-    # TODO(apduncan): Properly check hard mapping is working
-    mapping_dict: Dict[str, str]
-    if hard_mapping is not None:
-        mapping_dict = pd.read_csv(hard_mapping, sep=separator).to_dict()
-    else:
-        mapping_dict = {}
+    if model_w is None:
+        model_w = '5es'
 
-    # If no model is provided, attempt to use the 5 ES model
-    w_df: pd.DataFrame = pd.read_csv(
-        URL_5ES if model_w is None else model_w,
-        sep="\t" if model_w is None else separator,
-        index_col=0
+    # Use transform function
+    res: denovo.Decomposition = reapply(
+        abundance=abundance,
+        model_w=model_w,
+        hard_mapping=hard_mapping,
+        rollup=rollup,
+        separator=separator,
+        output_dir=output_dir
     )
-
-    res: TransformResult = transform_table(
-        abd=abundance_df,
-        family_rollup=rollup,
-        model_w=w_df,
-        hard_mapping=mapping_dict
-    )
-
-    # Output
-    os.makedirs(output_dir, exist_ok=True)
-    res.w.to_csv(os.path.join(output_dir, "w.tsv"))
-    res.h.to_csv(os.path.join(output_dir, "h.tsv"))
-    res.abundance_table.to_csv(os.path.join(output_dir, "abundance.tsv"))
-    res.model_fit.to_csv(os.path.join(output_dir, "taxon_mapping.tsv"))
-    res.h_norm.to_csv(os.path.join(output_dir, "h_norm.tsv"))
-    res.w_norm.to_csv(os.path.join(output_dir, "w_norm.tsv"))
-
-if __name__ == "__main__":
-    try:
-        tss_scale(
-            pd.read_csv("test/w.tsv", index_col=0, sep=","),
-            pd.read_csv("test/h.tsv", index_col=0, sep=",")
-        )
-        cli()
-    except EnteroException as e:
-        logging.error(f"Unable to transform: {e}")

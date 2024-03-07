@@ -1,0 +1,8 @@
+
+tasks:
+  - init: poetry install
+
+vscode:
+  extensions:
+    - ms-python.python
+    - ms-toolsai.jupyter
