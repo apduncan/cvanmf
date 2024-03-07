@@ -20,6 +20,12 @@ from enterosig.denovo import BicvSplit, BicvFold, bicv, _cosine_similarity, \
     decompositions, Decomposition, cli_rank_selection
 
 
+# Deal with matplotlib backend
+@pytest.fixture(scope="module", autouse=True)
+def pyplot_backend():
+    matplotlib.pyplot.switch_backend("Agg")
+
+
 @pytest.fixture
 def small_overlap_blocks(scope="session") -> pd.DataFrame:
     """Small overlapping block diagonal matrix with k=4, for use in testing
@@ -353,7 +359,6 @@ def test_plot_model_fit_point(
     pth = (tmp_path / "test_rank_sel.png")
     plt.save(pth)
     # Test that the file exists and isn't empty
-    os.system(f"open {pth}")
     assert pth.exists(), "Plot file not created"
     assert pth.stat().st_size > 0, "Plot file is empty"
 
@@ -643,3 +648,15 @@ def test_colors(small_overlap_blocks):
     assert all(hex_reg.match(x) is not None for x in k7.colors), \
         "Expected all default colors to be hex codes (i.e. #000fff)"
 
+def test_slicing(small_decomposition):
+    """Do all the different slicing methods work?"""
+
+    matplotlib.pyplot.switch_backend("Agg")
+    slcd: Decomposition = small_decomposition[:, :, ['S1', 'S2']]
+    slcd: Decomposition = small_decomposition[[0, 4, 6, 7]]
+    slcd = small_decomposition[:4, 6:11, [0, 2]]
+    assert (slcd.h.shape == (2, 4) and slcd.w.shape == (5, 2)
+            and slcd.x.shape == (5, 4)), \
+        "Sliced Decomposition has incorrect dimensions"
+    with pytest.raises(IndexError):
+        slcd = small_decomposition[[0, 4], ["A non existent sample"]]

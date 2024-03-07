@@ -1435,12 +1435,133 @@ class Decomposition:
                  h: pd.DataFrame,
                  w: pd.DataFrame,
                  feature_mapping: Optional[reapply.GenusMapping] = None) -> None:
-        self.__h: pd.DataFrame = h
-        self.__w: pd.DataFrame = w
+        self.__h: pd.DataFrame = self.__string_index(h)
+        self.__w: pd.DataFrame = self.__string_index(w)
+        if parameters.x is not None:
+            parameters.x.columns = [str(x) for x in parameters.x.columns]
+            parameters.x.index = [str(x) for x in parameters.x.index]
         self.__params: NMFParameters = parameters
         self.__input_hash: Optional[int] = None
         self.__colors: List[str] = self.__default_colors(n=parameters.rank)
         self.__feature_mapping: Optional[reapply.GenusMapping] = feature_mapping
+
+    @staticmethod
+    def __string_index(data: Union[pd.DataFrame, pd.Index]
+                       ) -> Union[pd.DataFrame, pd.Index]:
+        """Convert indices of pandas object to strings if they are numeric.
+        Numeric indices cause problems for plotting, and for detecting what
+        kind of slicing is desired, so we instead convert all to strings."""
+        data.index = [str(x) for x in data.index]
+        if isinstance(data, pd.DataFrame):
+            data.columns = [str(x) for x in data.columns]
+        return data
+
+    @staticmethod
+    def __flex_slice(df: pd.DataFrame,
+                     idx_i: Union[slice, List[Union[int, str]]],
+                     idx_j: Union[slice, List[Union[int, str]]]
+                     ) -> pd.DataFrame:
+        """Subset a dataframe by index position or value depending on list
+        contents."""
+        idx_i = list(df.index[idx_i]) if isinstance(idx_i, slice) else idx_i
+        idx_j = list(df.columns[idx_j]) if isinstance(idx_j, slice) else idx_j
+        pos_i: bool = isinstance(idx_i[0], int)
+        pos_j: bool = isinstance(idx_j[0], int)
+        match (pos_i, pos_j):
+            case (True, True):
+                return df.iloc[idx_i, idx_j]
+            case (False, False):
+                return df.loc[idx_i, idx_j]
+            case (True, False):
+                return df.iloc[idx_i, :].loc[:, idx_j]
+            case (False, True):
+                return df.iloc[:, idx_j].loc[idx_i, :]
+        raise IndexError()
+
+    def __getitem__(self, item):
+        """Allow slicing of a model.
+
+        Decompositions can be sliced or indexed along three axes:
+        * Samples: Alters X and H.
+        * Features: Alters X and W.
+        * Signatures: Alters W and H.
+
+        To slice a given axis, either a slice object, an iterable of integer
+        indices, or an iterable of string indices can be provided. For this
+        description, they'll be callable Slicelike.
+
+        For positional slicing, the order is samples, features, signatures.
+        This is at odds with conventional matrix addressing (rows, columns)
+        with the assumption that the most common slicing operation will be
+        to select a subset of samples, and so this should be the easiest to do.
+
+        Decomposition supports slicing in the following ways:
+        * Slicelike - Slice samples.
+        * Tuple(Slicelike, Slicelike) - Slice samples, features
+        * Tuple(Slicelike, Slicelike, Slicelike) - Slice samples, features,
+            signatures
+        """
+        # By default, use a slice object which takes all in the current order
+        Slicelike = Union[slice, Iterable]
+        slc_signatures: Slicelike = slice(self.parameters.rank)
+        slc_features: Slicelike = slice(self.w.shape[0])
+        # Default to assuming only one slice dimension passed, will be
+        # replaced if a tuple
+        slc_samples: Slicelike = item
+
+        # Validate input
+        if isinstance(item, tuple):
+            if len(item) == 1:
+                slc_samples = item[0]
+            if len(item) == 2:
+                slc_samples, slc_features = item
+            if len(item) == 3:
+                slc_samples, slc_features, slc_signatures = item
+        # If not a slice type, convert iterable to list and check indices are
+        # in list
+        for slc, idx, name in (x for x in
+                         [(slc_samples, self.h.columns, "sample"),
+                         (slc_signatures, self.h.index, "signature"),
+                         (slc_features, self.w.index, "feature")]
+                        if not isinstance(x[0], slice)):
+            # Check all items in index - assume we've received and iterable
+            slc = list(slc)
+            if not isinstance(slc[0], int):
+                if any(x not in idx for x in slc):
+                    raise IndexError(f"Some of {name} slice indices not found "
+                                     f"in the Decomposition object.")
+            else:
+                if max(slc) > len(idx) - 1 or min(slc) < 0:
+                    raise IndexError(f"Range for {name} indices out of bounds: "
+                                     f"min {min(slc)}, max {max(slc)}, "
+                                     f"index length {len(slc)}")
+
+        # Make new object with data subset
+        # Make h slice now in order to determine suitable rank, can't think
+        # of a better way of telling resulting dimension
+        new_h: pd.DataFrame = self.__flex_slice(self.h,
+                                                slc_signatures,
+                                                slc_samples)
+        cpy = Decomposition(
+            parameters=NMFParameters(
+                **(self.parameters._asdict() |
+                   dict(x=(None if self.parameters.x is None else
+                   self.__flex_slice(self.parameters.x,
+                                     slc_features,
+                                     slc_samples)),
+                        rank=new_h.shape[0]))
+            ),
+            h=new_h,
+            w=self.__flex_slice(self.w, slc_features, slc_signatures)
+        )
+        # Some extra work required to slice colours
+        cpy.colors = (self.colors[slc_signatures]
+                      if isinstance(slc_signatures, slice) else
+                      [self.colors[i] for i, x in enumerate(self.names)
+                        if (i if isinstance(slc_signatures[0], int) else x)
+                      in slc_signatures]
+                      )
+        return cpy
 
     @property
     def h(self) -> pd.DataFrame:
@@ -1854,7 +1975,8 @@ class Decomposition:
                                            name="Signature") +
                 plotnine.theme(axis_text_x=plotnine.element_text(angle=90),
                                legend_position="bottom",
-                               legend_title_align="center")
+                               legend_title_align="center") +
+                ordered_scale
         )
         # There are two optional components to this plot, a point indicating model
         # fit, and a ribbon indicating category membership. These are made separately
