@@ -15,6 +15,7 @@ plotnine = "^0.12.4"
 tqdm = "^4.66.1"
 patchworklib = "^0.6.3"
 pyyaml = "^6.0.1"
+setuptools = "^69.1.1"
 
 [tool.poetry.dev-dependencies]
 

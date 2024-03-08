@@ -211,10 +211,21 @@ def test_cli(tmp_path) -> None:
 
     runner: CliRunner = CliRunner()
     out_dir: pathlib.Path = tmp_path / "output_to"
+    # Subset the example data as it's too large for tests
+    pd.read_csv(
+        files("cvanmf.data").joinpath("NW_ABUNDANCE.tsv"),
+        sep="\t",
+        index_col=0
+    ).iloc[:, :20
+    ].to_csv(
+        tmp_path / "small_nw.tsv",
+        sep="\t"
+    )
+
     result = runner.invoke(
         cli,
         ("--abundance " +
-         str(files('cvanmf.data').joinpath('NW_ABUNDANCE.tsv')) +
+         str(tmp_path / "small_nw.tsv") +
          " -o " +
          str(out_dir))
     )

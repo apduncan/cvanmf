@@ -592,15 +592,20 @@ def test_quality_series(small_decomposition):
 
 def test_save_load_decompositions(small_decompositions_random,
                                   tmp_path: pathlib.Path):
-    matplotlib.pyplot.switch_backend("Agg")
+    # Trim small decompositions so we're using a little less time
+    # Keep two decompositions for two ranks
+    smaller_decomps: Dict[int, List[Decomposition]] = {
+        i: small_decompositions_random[i][0:2] for i in
+        small_decompositions_random.keys()
+    }
     Decomposition.save_decompositions(
-        small_decompositions_random,
+        smaller_decomps,
         output_dir=tmp_path / "test_save_decompositions"
     )
     loaded: Dict[int, List[Decomposition]] = Decomposition.load_decompositions(
         tmp_path / "test_save_decompositions"
     )
-    are_decompositions_close(small_decompositions_random, loaded)
+    are_decompositions_close(smaller_decomps, loaded)
 
     # Test that load is sharing a reference to input data X
     keys: List[int] = list(loaded.keys())
@@ -609,14 +614,14 @@ def test_save_load_decompositions(small_decompositions_random,
 
     # Test compressed output
     Decomposition.save_decompositions(
-        small_decompositions_random,
+        smaller_decomps,
         output_dir=tmp_path / "test_save_decompositions_compressed",
         compress=True
     )
     loaded: Dict[int, List[Decomposition]] = Decomposition.load_decompositions(
         tmp_path / "test_save_decompositions_compressed"
     )
-    are_decompositions_close(small_decompositions_random, loaded)
+    are_decompositions_close(smaller_decomps, loaded)
 
 
 def test_load(small_decomposition: Decomposition,
