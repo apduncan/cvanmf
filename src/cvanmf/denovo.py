@@ -44,7 +44,7 @@ from sklearn.decomposition._nmf import _beta_divergence
 from sklearn.metrics.pairwise import cosine_similarity
 from tqdm import tqdm
 
-import cvanmf.reapply as reapply
+# from cvanmf import reapply
 
 # Type aliases
 # BicvSplit = List[pd.DataFrame]
@@ -458,7 +458,7 @@ class NMFParameters(NamedTuple):
     avoid passing and saving large data."""
     rank: int
     """Rank of the decomposition."""
-    seed: Optional[Union[int, np.random.Generator]] = None
+    seed: Optional[Union[int, np.random.Generator, str]] = None
     """Random seed for initialising decomposition matrices; if None no seed
     used so results will not be reproducible."""
     alpha: float = 0.0
@@ -1434,7 +1434,8 @@ class Decomposition:
                  parameters: NMFParameters,
                  h: pd.DataFrame,
                  w: pd.DataFrame,
-                 feature_mapping: Optional[reapply.GenusMapping] = None) -> None:
+                 feature_mapping: Optional['reapply.FeatureMapping'] = None
+                 ) -> None:
         self.__h: pd.DataFrame = self.__string_index(h)
         self.__w: pd.DataFrame = self.__string_index(w)
         if parameters.x is not None:
@@ -1443,7 +1444,8 @@ class Decomposition:
         self.__params: NMFParameters = parameters
         self.__input_hash: Optional[int] = None
         self.__colors: List[str] = self.__default_colors(n=parameters.rank)
-        self.__feature_mapping: Optional[reapply.GenusMapping] = feature_mapping
+        self.__feature_mapping: Optional['reapply.FeatureMapping'] \
+            = feature_mapping
 
     @staticmethod
     def __string_index(data: Union[pd.DataFrame, pd.Index]
@@ -1723,7 +1725,7 @@ class Decomposition:
                 self.__colors = color_list
 
     @property
-    def feature_mapping(self) -> reapply.GenusMapping:
+    def feature_mapping(self) -> 'reapply.FeatureMapping':
         """Mapping of new data features to those in the model being reapplied
 
         When fitting new data to an existing model, the naming of feature may vary or

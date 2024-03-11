@@ -2,28 +2,71 @@
 import logging
 import math
 from importlib.resources import files
+from typing import NamedTuple, List, Optional, Callable
 
 import numpy as np
 import pandas as pd
 
+# from cvanmf import reapply, denovo
+import cvanmf.reapply as reapply
+import cvanmf.denovo as denovo
 
-def five_es() -> pd.DataFrame:
+class Signatures(NamedTuple):
+    """Definition of an existing signature model.
+
+    This provides the definition of existing signatures required to reapply
+    the signature model to new data. Where Decomposition stores the input and
+    H matrix, these are not necessary for transforming new data. Rather, we
+    only need the W matrix, the colors associated with each signature (for
+    consistency of representation), and the preprocessing steps (to match
+    features in the new data with those in the W matrix)."""
+    w: pd.DataFrame
+    """Feature weights (W matrix) for this model."""
+    colors: List[str]
+    """Color for each signature in the model."""
+    feature_match: reapply.FeatureMatch
+    """Function to map features in new data to those in the model W matrix."""
+    input_validation: reapply.InputValidation = lambda x: x
+    """Function to validate and potentially transform input table. Defaults
+    to identity function"""
+    citation: Optional[str] = None
+    """Citation when using this model."""
+
+    def reapply(self,
+                y: pd.DataFrame) -> denovo.Decomposition:
+        """Transform new data using this signature model.
+
+        :param y: New data of same type as the existing model.
+        """
+        return reapply._reapply_model(
+            y=y,
+            **{k: v for k, v in self._asdict().items() if k != "citation"}
+        )
+
+
+def five_es() -> Signatures:
     """The 5 Enterosignature model of Frioux et al.
     (2023, https://doi.org/10.1016/j.chom.2023.05.024). A summary of this model
     can also be found on the website https://enterosignatures.quadram.ac.uk
 
-    :return: W matrix of 5 Enterosignature model
-    :type: pd.DataFrame
+    :return: 5 Enterosignature model
+    :type: Signatures
     """
-    logging.info("If you use this model please cite Frioux et al. "
-                 "(2023, https://doi.org/10.1016/j.chom.2023.05.024)")
 
-    # with resources.path("cvanmf.data", "ES5_W.tsv") as f:
-    return pd.read_csv(
+    w: pd.DataFrame = pd.read_csv(
         str(files("cvanmf.data").joinpath("ES5_W.tsv")),
         sep="\t",
         index_col=0
     )
+    return Signatures(w=w, colors=None, feature_match=reapply.match_genera,
+                      input_validation=reapply.validate_table,
+                      citation=(
+                          "Frioux, C. et al. Enterosignatures define common "
+                          "bacterial guilds in the human gut microbiome. "
+                          "Cell Host & Microbe 31, 1111-1125.e6 (2023)."
+                          " https://doi.org/10.1016/j.chom.2023.05.024")
+                      )
+
 
 def five_es_x() -> pd.DataFrame:
     """The genus level relative abundance data used to train five ES model in
@@ -38,6 +81,7 @@ def five_es_x() -> pd.DataFrame:
         index_col=0
     )
 
+
 def example_abundance() -> pd.DataFrame:
     """The genus level relative abundance data for Non-Western cohort from
     Frioux et al. (2023, https://doi.org/10.1016/j.chom.2023.05.024).
@@ -50,6 +94,7 @@ def example_abundance() -> pd.DataFrame:
         sep="\t",
         index_col=0
     )
+
 
 def synthetic_data(m: int = 100,
                    n: int = 100,
