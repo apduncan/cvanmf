@@ -7,7 +7,6 @@ from typing import NamedTuple, List, Optional, Callable
 import numpy as np
 import pandas as pd
 
-# from cvanmf import reapply, denovo
 import cvanmf.reapply as reapply
 import cvanmf.denovo as denovo
 
@@ -33,14 +32,16 @@ class Signatures(NamedTuple):
     """Citation when using this model."""
 
     def reapply(self,
-                y: pd.DataFrame) -> denovo.Decomposition:
+                y: pd.DataFrame,
+                **kwargs) -> denovo.Decomposition:
         """Transform new data using this signature model.
 
         :param y: New data of same type as the existing model.
         """
         return reapply._reapply_model(
             y=y,
-            **{k: v for k, v in self._asdict().items() if k != "citation"}
+            **{k: v for k, v in self._asdict().items() | kwargs
+               if k != "citation"}
         )
 
 
@@ -59,7 +60,7 @@ def five_es() -> Signatures:
         index_col=0
     )
     return Signatures(w=w, colors=None, feature_match=reapply.match_genera,
-                      input_validation=reapply.validate_table,
+                      input_validation=reapply.validate_genus_table,
                       citation=(
                           "Frioux, C. et al. Enterosignatures define common "
                           "bacterial guilds in the human gut microbiome. "

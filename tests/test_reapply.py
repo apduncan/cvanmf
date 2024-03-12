@@ -12,7 +12,7 @@ from cvanmf.denovo import Decomposition, NMFParameters
 from cvanmf.models import Signatures
 from cvanmf.reapply import cli, to_relative, _reapply_model
 from cvanmf import models
-from cvanmf.reapply import (FeatureMapping, EnteroException, validate_table,
+from cvanmf.reapply import (FeatureMapping, CVANMFException, validate_genus_table,
                             match_genera, nmf_transform, transform_table,
                             ReapplyResult, model_fit)
 
@@ -30,7 +30,7 @@ def test_feature_mapping() -> None:
     mapping.add(feature_from="B", feature_to="B")
     assert mapping.mapping["B"] == ["B"], "Mapping not added succesfully"
 
-    with pytest.raises(EnteroException):
+    with pytest.raises(CVANMFException):
         # Add a mapping with a non-existent target
         mapping.add("B", "Missing")
         # Add a mapping with a non-existent source
@@ -91,15 +91,15 @@ def test_validate_table() -> None:
     malformed: pd.DataFrame = pd.DataFrame(
         [[0], [2]], index=["a", "b"]
     )
-    with pytest.raises(EnteroException):
-        validate_table(malformed, logger=lambda x: None)
+    with pytest.raises(CVANMFException):
+        validate_genus_table(malformed, logger=lambda x: None)
 
     # Test for no sample names
     no_colnames: pd.DataFrame = pd.DataFrame(
         [[0, 1, 2], [3, 4, 5]], index=["a", "b"]
     )
-    with pytest.raises(EnteroException):
-        validate_table(no_colnames, logger=lambda x: None)
+    with pytest.raises(CVANMFException):
+        validate_genus_table(no_colnames, logger=lambda x: None)
 
     # Run on some example data
     # We'll modify this dataset to trigger as many validation steps as possible
@@ -116,8 +116,8 @@ def test_validate_table() -> None:
     # - legitimate(ish) taxon with 0 observations
     transposed["Eukaryota;Ilex_aquifolium"] = 0
     log: List[str] = []
-    tidied: pd.DataFrame = validate_table(transposed,
-                                          logger=lambda x: log.append(x))
+    tidied: pd.DataFrame = validate_genus_table(transposed,
+                                                logger=lambda x: log.append(x))
     # Has this been transposed? Should have more samples than taxa for the
     # example data
     assert tidied.shape[1] > tidied.shape[0], "Not succesfully transposed"
@@ -138,8 +138,8 @@ def test_validate_table() -> None:
     dup_cols: List[str] = list(transposed.columns)
     dup_cols[0] = dup_cols[1]
     transposed.columns = dup_cols
-    with pytest.raises(EnteroException):
-        validate_table(transposed, logger=lambda x: log.append(x))
+    with pytest.raises(CVANMFException):
+        validate_genus_table(transposed, logger=lambda x: log.append(x))
 
 
 def test_match_genera() -> None:
@@ -154,7 +154,7 @@ def test_match_genera() -> None:
         abd.index[0]: w.index[-1]
     }
 
-    map = match_genera(es_w=w, abd_tbl=abd, hard_mapping=mapping,
+    map = match_genera(w=w, y=abd, hard_mapping=mapping,
                        family_rollup=True)
     # TODO: Move the below commented checks to _reapply_model
     # # Basic sanity check of results
@@ -173,10 +173,10 @@ def test_match_genera() -> None:
 
     # Test just that no errors with different parameters
     # Without mapping
-    map = match_genera(es_w=w, abd_tbl=abd, hard_mapping=None,
+    map = match_genera(w=w, y=abd, hard_mapping=None,
                        family_rollup=True)
     # No rollup
-    map = match_genera(es_w=w, abd_tbl=abd, hard_mapping=mapping,
+    map = match_genera(w=w, y=abd, hard_mapping=mapping,
                        family_rollup=False)
 
 
@@ -242,7 +242,7 @@ def test__reapply_model():
     res = _reapply_model(y=models.example_abundance().iloc[:, :20],
                          w=models.five_es(),
                          colors=None,
-                         input_validation=validate_table,
+                         input_validation=validate_genus_table,
                          feature_match=match_genera,
                          family_rollup=True)
     foo = 'bar'

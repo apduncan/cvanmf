@@ -18,6 +18,7 @@ from cvanmf import models
 from cvanmf.denovo import BicvSplit, BicvFold, bicv, _cosine_similarity, \
     rank_selection, BicvResult, plot_rank_selection, decompose, NMFParameters, \
     decompositions, Decomposition, cli_rank_selection
+from cvanmf.reapply import validate_genus_table, match_genera, match_identical
 
 
 # Deal with matplotlib backend
@@ -373,7 +374,8 @@ def test_plot_relative_weight(
         np.random.choice(["A", "B"], size=small_decomposition.h.shape[1]),
         index=small_decomposition.h.columns
     )
-    plt = small_decomposition.plot_relative_weight(group=rnd_cat, model_fit=True)
+    plt = small_decomposition.plot_relative_weight(group=rnd_cat,
+                                                   model_fit=True)
     pth = (tmp_path / "test_rank_sel.png")
     plt.savefig(pth)
     # Test that the file exists and isn't empty
@@ -640,6 +642,7 @@ def test_load(small_decomposition: Decomposition,
     loaded_comp: Decomposition = Decomposition.load(str(path_targz))
     is_decomposition_close(small_decomposition, loaded_comp)
 
+
 def test_colors(small_overlap_blocks):
     """Check default colours get set correctly."""
 
@@ -653,6 +656,7 @@ def test_colors(small_overlap_blocks):
     assert all(hex_reg.match(x) is not None for x in k7.colors), \
         "Expected all default colors to be hex codes (i.e. #000fff)"
 
+
 def test_slicing(small_decomposition):
     """Do all the different slicing methods work?"""
 
@@ -665,3 +669,18 @@ def test_slicing(small_decomposition):
         "Sliced Decomposition has incorrect dimensions"
     with pytest.raises(IndexError):
         slcd = small_decomposition[[0, 4], ["A non existent sample"]]
+
+def test_reapply(small_decomposition):
+    """Can new data be transformed using the model?"""
+    # TODO: Improve this test, only checks it does not crash currently
+    new_decomp: Decomposition = small_decomposition.reapply(
+        y=small_decomposition.x,
+        input_validation=lambda x, **kwargs: x,
+        feature_match=match_identical,
+        family_rollup=True
+    )
+    # This should generate similar h matrices
+    # Should they be more similar than this?
+    assert np.allclose(small_decomposition.h, new_decomp.h,
+                       atol=0.015), \
+        "Signature weights not equal for identical data."

@@ -44,10 +44,11 @@ from sklearn.decomposition._nmf import _beta_divergence
 from sklearn.metrics.pairwise import cosine_similarity
 from tqdm import tqdm
 
+from cvanmf.reapply import InputValidation, FeatureMatch, _reapply_model
+
 # from cvanmf import reapply
 
 # Type aliases
-# BicvSplit = List[pd.DataFrame]
 Numeric = Union[int, float]
 """Alias for a python numeric types"""
 
@@ -1781,6 +1782,29 @@ class Decomposition:
         # Replace non-monodominants signature with nan
         mono_df.loc[~mono_df['is_monodominant'], 'signature_name'] = np.nan
         return mono_df
+
+    def reapply(self,
+                y: pd.DataFrame,
+                input_validation: InputValidation,
+                feature_match: FeatureMatch,
+                **kwargs
+                ) -> Decomposition:
+        """Get signature weights for new data.
+
+        :param y: New data of the same type used to generate this decomposition
+        :param input_validation: Function to validate and transform y
+        :param feature_match: Function to match features in y and w
+        :param kwargs: Arguments to pass to validate_input and feature_match
+        """
+        # Wrapper around the _reapply_model function
+        return _reapply_model(
+            y=y,
+            w=self.w,
+            colors=self.colors,
+            input_validation=input_validation,
+            feature_match=feature_match,
+            **kwargs
+        )
 
     def scaled(self,
                matrix: Union[pd.DataFrame, str],
