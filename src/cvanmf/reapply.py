@@ -613,62 +613,6 @@ def nmf_transform(new_abd: pd.DataFrame,
     return h_df
 
 
-def transform_table(abundance: pd.DataFrame,
-                    model_w: pd.DataFrame,
-                    hard_mapping: Optional[Dict[str, str]] = None,
-                    rollup: bool = True,
-                    relative_abundance: bool = False,
-                    logger: Callable[[str], None] = _console_logger
-                    ) -> 'denovo.Decomposition':
-    """Transform abundance DataFrame using model W DataFrame.
-
-    The new data must be annotated against the same taxonomy the model uses.
-    Currently this is GTDB r207 for the 5 Enterosignatures model.
-    Taxon names will be automatically matched between the abundance table and
-    model where possible, (see :func:`cvanmf.transform.match_genera`).
-    Most of the work is done in :func:`cvanmf.transform.transform_table`,
-    this mostly provides convenience of allowing parameters to be paths or
-    dataframes etc.
-
-    :param abundance: Table of genus level abundances to transform
-    :type abundance: pd.DataFrame
-    :param model_w: W matrix of model to use
-    :type model_w: pd.DataFrame
-    :param hard_mapping: Define matchups between taxon identifeiers in abundance
-        and those in model_w. These will be used in preference of any automated
-        matches.
-    :type hard_mapping: Optional[Dict[str, str]]
-    :param rollup: For genera in abundance which have no match in model_w,
-        sum their abundance under the family level entry where available.
-    :param relative_abundance: Whether to convert weights to relative abundance
-        (all samples sum to 1)
-    :type relative_abundance: bool
-    :type rollup: bool
-    """
-    # Import locally to avoid circular imports. Most of this module does not
-    # need to know about the denovo structures
-    from cvanmf.denovo import Decomposition, NMFParameters
-
-    abd_tbl: pd.DataFrame = validate_genus_table(abundance, logger=logger)
-    new_abd, new_w, mapping = match_genera(
-        w=model_w, y=abd_tbl, logger=logger, hard_mapping=hard_mapping,
-        family_rollup=rollup
-    )
-    h: pd.DataFrame = nmf_transform(new_abd=new_abd, w_prime=new_w,
-                                    logger=logger)
-    decomp: Decomposition = denovo.Decomposition(
-        w=new_w, h=h.T, feature_mapping=mapping,
-        parameters=NMFParameters(
-            x=new_abd,
-            rank=new_w.shape[1],
-            # TODO: Properly implement seeds for refitting
-            # Shouldn't be needed as no randomisation
-            seed='Generator',
-        )
-    )
-    return decomp
-
-
 class FeatureMatch(Protocol):
     """Signature for functions which perform feature matching."""
 
@@ -823,7 +767,7 @@ def reapply(y: Union[str, pd.DataFrame],
         mapping_dict = {}
 
     res: 'denovo.Decomposition' = model_obj.reapply(
-        y=y,
+        y=abundance_df,
         hard_mapping=mapping_dict,
         **kwargs
     )
@@ -835,60 +779,61 @@ def reapply(y: Union[str, pd.DataFrame],
 
 
 @click.command()
-@click.option("-a",
-              "--abundance",
+@click.option("-i",
+              "--input",
               required=True,
               type=click.Path(exists=True, dir_okay=False),
-              help="""Genus level relative abundance table, with genera on rows
-              and samples on columns.""")
+              help="""New feature matrix, with features on rows and samples on 
+              columns.""")
 @click.option("-m",
-              "--model_w",
+              "--model",
               required=False,
-              type=click.Path(exists=True, dir_okay=False),
-              help="""Enterosignature W matrix. If not provided, attempts to 
-               find or download the 5 ES model matrix""")
+              # TODO: Define the list of models elsewhere
+              type=click.Choice(['5es']),
+              default="5es",
+              help="""Name of the model to reapply.""")
 @click.option("-h",
               "--hard_mapping",
               required=False,
               type=click.Path(exists=True, dir_okay=False),
-              help="""Mapping between taxa in abdundance table and ES W matrix.
-               Provide as a csv, with first column taxa in input table, second 
-               column the name in ES W to map to.""")
+              help="""Mapping between features in input table and model W 
+              matrix. Provide as a csv, with first column features in input 
+              table, second column the name in model W to map to.""")
 @click.option("--rollup/--no-rollup",
               default=True,
-              help="""For genera in abundance table which do not match the 
-               ES W matrix, add their abundance to a family level entry if one 
-               exists.""")
+              help="""Only used when genera are features. 
+              Genera in abundance table which do not match the model W matrix, 
+              add their abundance to a family level entry if one exists.""")
 @click.option("-s", "--separator",
               default="\t", type=str,
-              help="""Separator used in input files.""")
+              help="""Separator used in input and output files.""")
 @click.option("-o", "--output_dir",
               required=True, type=click.Path(file_okay=False),
               help="""Directory to write output to.""")
-def cli(abundance: str,
-        model_w: str,
+def cli(input: str,
+        model: str,
         hard_mapping: str,
         rollup: bool,
         separator: str,
         output_dir: str) -> None:
-    """Command line interfrace to fit new data to an existing Enterosignatures
-    model. The new data must be annotated against the same taxonomy the model
-    uses. Currently this is GTDB r207 for the 5 Enterosignatures model.
+    """Command line interface to fit new data to an existing NMF Signatures
+    model. The new data must use the same features as the model,
+    though there can be some difference (features in now data not in model
+    and vice versa). Currently this is GTDB r207 for the 5 Enterosignatures
+    model.
     
     For more on Enterosignatures see:
-
     *  Frioux et al. 2023 (doi:10.1016/j.chom.2023.05.024)
-
     *  https://enterosignatures.quadram.ac.uk
     """
 
-    if model_w is None:
-        model_w = '5es'
+    if model is None:
+        model = '5es'
 
     # Use transform function
-    res: 'denovo.Decomposition' = reapply(
-        y=abundance,
-        model=model_w,
+    res: 'Decomposition' = reapply(
+        y=input,
+        model=model,
         hard_mapping=hard_mapping,
         rollup=rollup,
         separator=separator,

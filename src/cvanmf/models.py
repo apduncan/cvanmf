@@ -2,13 +2,11 @@
 import logging
 import math
 from importlib.resources import files
-from typing import NamedTuple, List, Optional, Callable
+from typing import NamedTuple, List, Optional, Callable, Dict, Any
 
 import numpy as np
 import pandas as pd
 
-import cvanmf.reapply as reapply
-import cvanmf.denovo as denovo
 
 class Signatures(NamedTuple):
     """Definition of an existing signature model.
@@ -23,9 +21,9 @@ class Signatures(NamedTuple):
     """Feature weights (W matrix) for this model."""
     colors: List[str]
     """Color for each signature in the model."""
-    feature_match: reapply.FeatureMatch
+    feature_match: 'FeatureMatch'
     """Function to map features in new data to those in the model W matrix."""
-    input_validation: reapply.InputValidation = lambda x: x
+    input_validation: 'InputValidation' = lambda x: x
     """Function to validate and potentially transform input table. Defaults
     to identity function"""
     citation: Optional[str] = None
@@ -33,15 +31,15 @@ class Signatures(NamedTuple):
 
     def reapply(self,
                 y: pd.DataFrame,
-                **kwargs) -> denovo.Decomposition:
+                **kwargs) -> 'Decomposition':
         """Transform new data using this signature model.
 
         :param y: New data of same type as the existing model.
         """
+        from cvanmf import reapply
         return reapply._reapply_model(
             y=y,
-            **{k: v for k, v in self._asdict().items() | kwargs
-               if k != "citation"}
+            **(self._asdict() | kwargs)
         )
 
 
@@ -59,7 +57,10 @@ def five_es() -> Signatures:
         sep="\t",
         index_col=0
     )
-    return Signatures(w=w, colors=None, feature_match=reapply.match_genera,
+    from cvanmf import reapply
+    return Signatures(w=w,
+                      colors=None,
+                      feature_match=reapply.match_genera,
                       input_validation=reapply.validate_genus_table,
                       citation=(
                           "Frioux, C. et al. Enterosignatures define common "

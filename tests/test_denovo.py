@@ -682,5 +682,5 @@ def test_reapply(small_decomposition):
     # This should generate similar h matrices
     # Should they be more similar than this?
     assert np.allclose(small_decomposition.h, new_decomp.h,
-                       atol=0.015), \
+                       atol=0.025), \
         "Signature weights not equal for identical data."

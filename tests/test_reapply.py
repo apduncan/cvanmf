@@ -3,18 +3,17 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Set, List, Dict, Iterable
 
+import matplotlib.pyplot
 import numpy as np
 import pandas as pd
 import pytest
 from click.testing import CliRunner
 
 from cvanmf.denovo import Decomposition, NMFParameters
-from cvanmf.models import Signatures
-from cvanmf.reapply import cli, to_relative, _reapply_model
+from cvanmf.reapply import cli, _reapply_model
 from cvanmf import models
-from cvanmf.reapply import (FeatureMapping, CVANMFException, validate_genus_table,
-                            match_genera, nmf_transform, transform_table,
-                            ReapplyResult, model_fit)
+from cvanmf.reapply import (FeatureMapping, CVANMFException,
+                            validate_genus_table, match_genera)
 
 
 def test_feature_mapping() -> None:
@@ -84,8 +83,8 @@ def test_feature_mapping() -> None:
     assert trans_w.loc["N"].sum() == 0, "Missing taxon does not have 0 weight"
 
 
-def test_validate_table() -> None:
-    """Test abunance table validations"""
+def test_validate_genus_table() -> None:
+    """Test genus matrix validations for ES models."""
 
     # Test for only one sample - maybe we should allow this though?
     malformed: pd.DataFrame = pd.DataFrame(
@@ -121,7 +120,8 @@ def test_validate_table() -> None:
     # Has this been transposed? Should have more samples than taxa for the
     # example data
     assert tidied.shape[1] > tidied.shape[0], "Not succesfully transposed"
-    assert tidied.shape[0] == 586, "Tidied data should have 5 columns (1 per ES)"
+    assert tidied.shape[0] == 586, ("Tidied data should have 5 columns (1 per "
+                                    "ES)")
     # Have ranked identifiers been removed?
     assert sum('d__' in x for x in tidied.index) == 0, \
         "Rank identifiers not removed"
@@ -144,7 +144,7 @@ def test_validate_table() -> None:
 
 def test_match_genera() -> None:
     """Test function for matching genera in an abundance table and model. This
-    is the bulk of work in reapplying Eneterosignatures."""
+    is the bulk of work in reapplying Enterosignatures."""
 
     # Make test data to work with
     abd: pd.DataFrame = models.example_abundance()
@@ -180,34 +180,9 @@ def test_match_genera() -> None:
                        family_rollup=False)
 
 
-def test_model_fit() -> None:
-    """Test functions for calculating model fit."""
-
-    # Check simplest case - two identical matrices should produce all 1s
-    w: pd.DataFrame = models.five_es().w
-    abd: pd.DataFrame = models.example_abundance()
-    res: Decomposition = transform_table(abundance=abd, rollup=True,
-                                         model_w=w)
-    mf: pd.Series = res.model_fit
-    # Check for stable mean model fit between versions
-    assert round(mf.mean(), 3) == round(0.636286, 3), \
-        "Change in mean model fit"
-
-    # Model fit between identical matrices should be 1.0
-    clone_decomp: Decomposition = Decomposition(
-        parameters=NMFParameters(
-            **(res.parameters._asdict() | dict(x=res.wh))
-        ),
-        h=res.h,
-        w=res.w
-    )
-    # Sometimes, 1.0 != 1.0, thanks computers
-    assert all(np.isclose(clone_decomp.model_fit, 1.0)), \
-        "Model fit between identical matrices not all 1.0"
-
-
 def test_cli(tmp_path) -> None:
     """Test the click command line interface for reapplying."""
+    matplotlib.pyplot.switch_backend('Agg')
 
     runner: CliRunner = CliRunner()
     out_dir: pathlib.Path = tmp_path / "output_to"
@@ -224,11 +199,13 @@ def test_cli(tmp_path) -> None:
 
     result = runner.invoke(
         cli,
-        ("--abundance " +
+        ("-i " +
          str(tmp_path / "small_nw.tsv") +
          " -o " +
          str(out_dir))
     )
+
+    assert result.exit_code == 0, "CLI returned non-zero exit code"
 
     # Check output files are created
     for f in ['w.tsv', 'h.tsv', 'x.tsv', 'feature_mapping.tsv']:
@@ -240,9 +217,8 @@ def test__reapply_model():
     wrapper around this."""
 
     res = _reapply_model(y=models.example_abundance().iloc[:, :20],
-                         w=models.five_es(),
+                         w=models.five_es().w,
                          colors=None,
                          input_validation=validate_genus_table,
                          feature_match=match_genera,
                          family_rollup=True)
-    foo = 'bar'
