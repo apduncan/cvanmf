@@ -1,24 +1,20 @@
 """Tests for denovo ES generation."""
 import itertools
-import math
-import os
 import pathlib
-import random
 import re
-from typing import List, Dict
+from typing import List, Dict, Iterable
 
-from click.testing import CliRunner
 import matplotlib.pyplot
 import numpy as np
 import pandas as pd
-import plotnine
 import pytest
+from click.testing import CliRunner
 
 from cvanmf import models
 from cvanmf.denovo import BicvSplit, BicvFold, bicv, _cosine_similarity, \
     rank_selection, BicvResult, plot_rank_selection, decompose, NMFParameters, \
     decompositions, Decomposition, cli_rank_selection
-from cvanmf.reapply import validate_genus_table, match_genera, match_identical
+from cvanmf.reapply import match_identical
 
 
 # Deal with matplotlib backend
