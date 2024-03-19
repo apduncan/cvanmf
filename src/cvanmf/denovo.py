@@ -132,7 +132,7 @@ class BicvSplit:
 
     @i.setter
     def i(self, i: int) -> None:
-        self.__i = i
+        self.__i = int(i)
 
     @property
     def shape(self) -> Tuple[int, int]:
@@ -550,6 +550,27 @@ class BicvResult(NamedTuple):
     vector."""
     l2_norm: np.ndarray
     """L2 norm between each A and A'."""
+    i: int
+    """Shuffle number when there are multiple shuffles. Included to allow 
+    spreading bicv across multiple processes, but without needing to return
+    a copy of the full matrix."""
+
+    def __drop_mats(self) -> BicvResult:
+        """Remove all matrices from results tuple if keep_mats is False,
+        otherwise just return self."""
+        if self.parameters.keep_mats:
+            return self
+        if self.parameters.x is None and self.a is None:
+            return self
+        # Drop A and X matrices. For merge operator | value in last dict
+        # takes precedence
+        param_prime: NMFParameters = NMFParameters(
+            **(self.parameters._asdict() | dict(x=None))
+        )
+        return BicvResult(
+            **(self._asdict() | dict(parameters=param_prime, a=None))
+        )
+
 
     @staticmethod
     def join_folds(results: List[BicvResult]) -> BicvResult:
@@ -569,6 +590,7 @@ class BicvResult(NamedTuple):
                               "parameters"))
         return BicvResult(
             parameters=results[0].parameters,
+            i=results[0].i,
             r_squared=np.concatenate([x.r_squared for x in results]),
             reconstruction_error=np.concatenate(
                 [x.reconstruction_error for x in results]),
@@ -580,7 +602,7 @@ class BicvResult(NamedTuple):
             l2_norm=np.concatenate([x.l2_norm for x in results]),
             a=([x.a for x in results] if
                results[0].parameters.keep_mats else None)
-        )
+        ).__drop_mats()
 
     def to_series(self,
                   summarise: Callable[[np.ndarray], float] = np.mean
@@ -604,7 +626,7 @@ class BicvResult(NamedTuple):
         }
         # Also include the shuffle number from shuffle params, might be of
         # interest to users
-        params['shuffle_num'] = self.parameters.x.i
+        params['shuffle_num'] = self.i
         # Join these two and turn into a series
         series: pd.Series = pd.Series(
             {**res_dict, **params}
@@ -927,6 +949,7 @@ def __bicv_single(params: NMFParameters, fold: BicvFold) -> BicvResult:
 
     return BicvResult(
         parameters=params,
+        i=params.x.i,
         a=[Ma_calc] if params.keep_mats else None,
         r_squared=np.array([_rsquared(fold.A.values, Ma_calc)]),
         sparsity_h=np.array([_sparsity(H_a)]),

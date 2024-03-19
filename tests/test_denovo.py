@@ -270,9 +270,11 @@ def test_bicv(small_bicv_result: BicvResult):
     # TODO: Complete tests, only checks for execution without error currently
     assert res.a is None, \
         "A' matrix returned when should be None due to keep_mats."
+    assert res.parameters.x is None, \
+        "X matrix should not be returned when keep_mats=False"
     # Check not getting any invalid values in result series
     for name, val in res._asdict().items():
-        if name in {'parameters', 'a'}:
+        if name in {'parameters', 'a', 'i'}:
             continue
         assert all(~np.isnan(val)), \
             f"NAs in {name}"
