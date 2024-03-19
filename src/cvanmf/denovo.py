@@ -613,7 +613,7 @@ class BicvResult(NamedTuple):
             to a single value for each shuffle.
         :returns: Series with entry for each non-parameter measure
         """
-        exclude: Set[str] = {"a", "parameters"}
+        exclude: Set[str] = {"a", "parameters", "i"}
         res_dict: Dict[str, float] = {
             name: summarise(vals) for name, vals in self._asdict().items() if
             name not in exclude
@@ -816,7 +816,7 @@ def plot_rank_selection(results: Dict[int, List[BicvResult]],
         name for (name, value) in
         inspect.getmembers(
             BicvResult, lambda x: isinstance(x, collections._tuplegetter))
-    ).difference({"a", "parameters", *exclude}).union({"rank"}))
+    ).difference({"a", "parameters", "i", *exclude}).union({"rank"}))
     # Get results and stack so measure is a column
     df: pd.DataFrame = (
         BicvResult.results_to_table(results, summarise=summarise_fn)[measures]
