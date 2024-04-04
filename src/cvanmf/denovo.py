@@ -1891,6 +1891,50 @@ class Decomposition:
         scaled: pd.DataFrame = matrix / matrix.sum()
         return scaled.T if transpose else scaled
 
+    def compare_signatures(self, b: 'Comparable') -> pd.DataFrame:
+        """Similarity between these signatures and one other set.
+
+        Similarity here is defined as cosine as the angle between each
+        pair of signature vectors, so 1 is identical (ignoring scale) and
+        0 is perpendicular.
+
+        This is a convenience method which calls
+        :func:`combine.compare_signatures`.
+
+        :param b: Signature matrix, or object with signature matrix
+        :returns: Matrix with cosine of angles between signature vectors.
+        """
+
+        from cvanmf.combine import compare_signatures
+        return compare_signatures(self, b)
+
+    def match_signatures(self, b: 'Comparable') -> pd.DataFrame:
+        """Identify optimal matches between these signatures and one other set
+
+        Find the pairing of signatures which are most similar. More technically,
+        this finds the pairing of signatures which maximises the total cosine
+        similarity using the Hungarian algorithm. It is possible that a
+        signature gets paired with another for which the cosine similarity is
+        not highest, suggesting a potentially bad match between some signatures
+        in the model.
+
+        The return is a dataframe with columns a and b for which signatures
+        are paired, the cosine similarity of the pairing, and the maximum
+        'off-target' cosine value for any of the signatures which it was not
+        assigned to. The intention for the off-target score is that ideally
+        this would be low, and the paired similarity high: signatures match
+        well their paired one, while being dissimilar to all others.
+
+        This is a convenince method which calls
+        :func:`combine.match_signatures`.
+
+        :param b: Signature matrix, or object with signature matrix
+        :returns: DataFrame with pairing and scores
+        """
+
+        from cvanmf.combine import match_signatures
+        return match_signatures(self, b)
+
     def plot_modelfit(self,
                       group: Optional[pd.Series] = None,
                       ) -> plotnine.ggplot:
@@ -2544,8 +2588,8 @@ class Decomposition:
             logging.warning("Some colours are duplicated when plotting over 20 "
                             "signatures")
             return (
-                    Decomposition.DEFAULT_SCALES[-1] *
-                    math.ceil(n / len(Decomposition.DEFAULT_SCALES))[:n]
+                    (Decomposition.DEFAULT_SCALES[-1] *
+                    math.ceil(n / len(Decomposition.DEFAULT_SCALES)))[:n]
             )
 
 

@@ -145,3 +145,4 @@ def synthetic_data(m: int = 100,
         block_mat,
         index=[f'feat_{i_lab}' for i_lab in range(i)],
         columns=[f'samp_{j_lab}' for j_lab in range(j)])
+
