@@ -410,9 +410,9 @@ class BicvSplit:
             while col < 3:
                 done += 1
                 all_sub_matrices[done - 1] = df.iloc[
-                             thresholds_feat[row]:thresholds_feat[row + 1],
-                             thresholds_sample[col]: thresholds_sample[col + 1]
-                ]
+                                             thresholds_feat[row]:thresholds_feat[row + 1],
+                                             thresholds_sample[col]: thresholds_sample[col + 1]
+                                             ]
                 col += 1
             row += 1
             col = 0
@@ -570,7 +570,6 @@ class BicvResult(NamedTuple):
         return BicvResult(
             **(self._asdict() | dict(parameters=param_prime, a=None))
         )
-
 
     @staticmethod
     def join_folds(results: List[BicvResult]) -> BicvResult:
@@ -1040,7 +1039,7 @@ def _write_symlink(path: pathlib.Path,
         if target.is_file():
             logging.debug("Attempting to symlink %s -> %s", path, target)
             try:
-                path.symlink_to(target)
+                path.symlink_to(target.resolve())
                 linked: bool = True
             except Exception as e:
                 logging.debug("Failed to create symlink %s -> %s", path, target)
@@ -1453,7 +1452,6 @@ class Decomposition:
     """Defines the files while are loaded to recreate a decomposition object
     from disk."""
 
-
     def __init__(self,
                  parameters: NMFParameters,
                  h: pd.DataFrame,
@@ -1546,10 +1544,10 @@ class Decomposition:
         # If not a slice type, convert iterable to list and check indices are
         # in list
         for slc, idx, name in (x for x in
-                         [(slc_samples, self.h.columns, "sample"),
-                         (slc_signatures, self.h.index, "signature"),
-                         (slc_features, self.w.index, "feature")]
-                        if not isinstance(x[0], slice)):
+                               [(slc_samples, self.h.columns, "sample"),
+                                (slc_signatures, self.h.index, "signature"),
+                                (slc_features, self.w.index, "feature")]
+                               if not isinstance(x[0], slice)):
             # Check all items in index - assume we've received and iterable
             slc = list(slc)
             if not isinstance(slc[0], int):
@@ -1572,9 +1570,9 @@ class Decomposition:
             parameters=NMFParameters(
                 **(self.parameters._asdict() |
                    dict(x=(None if self.parameters.x is None else
-                   self.__flex_slice(self.parameters.x,
-                                     slc_features,
-                                     slc_samples)),
+                           self.__flex_slice(self.parameters.x,
+                                             slc_features,
+                                             slc_samples)),
                         rank=new_h.shape[0]))
             ),
             h=new_h,
@@ -1584,8 +1582,8 @@ class Decomposition:
         cpy.colors = (self.colors[slc_signatures]
                       if isinstance(slc_signatures, slice) else
                       [self.colors[i] for i, x in enumerate(self.names)
-                        if (i if isinstance(slc_signatures[0], int) else x)
-                      in slc_signatures]
+                       if (i if isinstance(slc_signatures[0], int) else x)
+                       in slc_signatures]
                       )
         return cpy
 
@@ -1729,17 +1727,19 @@ class Decomposition:
             for signature, color in colors.items():
                 try:
                     sig_idx: int = self.names.index(signature)
-                    self.colors[sig_idx] = color
+                    self.__colors[sig_idx] = color
                 except IndexError as e:
                     logging.info("Unable to set color for %s, signature"
                                  "not found", signature)
+        elif colors is None:
+            self.__colors = self.__default_colors(self.parameters.rank)
         else:
             color_list: List[str] = list(colors)
             if len(color_list) < self.parameters.rank:
                 logging.info("Fewer colors than signature provided. Given %s, "
                              "expected %s", len(color_list),
                              self.parameters.rank)
-                self.colors[:len(color_list)] = color_list
+                self.__colors[:len(color_list)] = color_list
             elif len(color_list) > self.parameters.rank:
                 logging.info("More colors than signatures provided. Given %s, "
                              "expected %s", len(color_list),
@@ -2006,21 +2006,21 @@ class Decomposition:
         plt: plotnine.ggplot = (plotnine.ggplot(
             mf_df,
             mapping=mapping
-            ) +
-                plotnine.geom_point() +
-                plotnine.theme_minimal() +
-                plotnine.theme(
-                    panel_grid_major_x=plotnine.element_blank(),
-                    panel_grid_minor_x=plotnine.element_blank(),
-                    panel_grid_minor_y=plotnine.element_blank(),
-                    axis_text_x=plotnine.element_text(angle=90)
-                ) +
-                plotnine.scale_y_continuous(
-                    limits=yrange
-                ) +
-                plotnine.ylab("Model Fit") +
-                plotnine.xlab("")
-        )
+        ) +
+                                plotnine.geom_point() +
+                                plotnine.theme_minimal() +
+                                plotnine.theme(
+                                    panel_grid_major_x=plotnine.element_blank(),
+                                    panel_grid_minor_x=plotnine.element_blank(),
+                                    panel_grid_minor_y=plotnine.element_blank(),
+                                    axis_text_x=plotnine.element_text(angle=90)
+                                ) +
+                                plotnine.scale_y_continuous(
+                                    limits=yrange
+                                ) +
+                                plotnine.ylab("Model Fit") +
+                                plotnine.xlab("")
+                                )
         if threshold is not None:
             plt = (plt +
                    plotnine.scale_color_manual(
@@ -2127,13 +2127,13 @@ class Decomposition:
             plt_mfp = self.plot_modelfit_point(**kwargs)
             # Remove x-labels and legend
             plt_mfp = (
-                plt_mfp +
-                plotnine.theme(axis_title_x=plotnine.element_blank(),
-                               axis_ticks_minor_x=plotnine.element_blank(),
-                               axis_ticks_major_y=plotnine.element_blank(),
-                               axis_text_x=plotnine.element_blank()) +
-                plotnine.guides(color=None) +
-                small_yaxis_lbls
+                    plt_mfp +
+                    plotnine.theme(axis_title_x=plotnine.element_blank(),
+                                   axis_ticks_minor_x=plotnine.element_blank(),
+                                   axis_ticks_major_y=plotnine.element_blank(),
+                                   axis_text_x=plotnine.element_blank()) +
+                    plotnine.guides(color=None) +
+                    small_yaxis_lbls
             )
             if ordered_scale is not None:
                 plt_mfp = plt_mfp + ordered_scale
@@ -2221,13 +2221,58 @@ class Decomposition:
         )
         return plt
 
+    def plot_feature_weight(
+            self,
+            threshold: float = 0.04,
+            label_fn: Callable[[str], str] = None
+    ) -> plotnine.ggplot:
+        """Plot features which contribute to each signature.
+
+        Represent the relative contribution of features to signatures, showing
+        any features which contribute over a threshold proportion of the weight.
+
+        :param threshold: Show any features which contribute more than this
+            proportion of the weight for this signature.
+        :param label_fn: Function to map labels (use to make shortened labels
+            for example)
+        """
+
+        if label_fn is None:
+            label_fn = lambda x: x
+        feat_weight: pd.DataFrame = (
+            self.scaled('w')
+            .stack()
+            .reset_index()
+            .set_axis(['feature', 'signature', 'rel_weight'], axis="columns")
+        )
+        feat_weight = feat_weight.loc[feat_weight['rel_weight'] >= threshold]
+        feat_weight['label'] = feat_weight['feature'].map(label_fn)
+
+        plt: plotnine.ggplot = (
+                plotnine.ggplot(feat_weight,
+                                mapping=plotnine.aes(
+                                    x="signature", fill="signature", y="label",
+                                    label="rel_weight"
+                                )
+                                ) +
+                plotnine.geom_point(plotnine.aes(size="rel_weight")) +
+                plotnine.geom_text(size=8, nudge_x=0.4, nudge_y=-0.05,
+                                   format_string="{:.1%}") +
+                plotnine.labs(x="Signature", y="Feature", fill="Signature",
+                              size="Relative Weight") +
+                plotnine.guides(fill=False, size=False) +
+                plotnine.scale_fill_manual(values=self.colors)
+        )
+        return plt
+
     def save(self,
              out_dir: Union[str, pathlib.Path],
              compress: bool = False,
              param_path: Optional[pathlib.Path] = None,
              x_path: Optional[pathlib.Path] = None,
              symlink: bool = True,
-             delim: str = "\t") -> None:
+             delim: str = "\t",
+             suppress_plots: bool = False) -> None:
         """Write decomposition to disk.
 
         Export this decomposition and associated data. This is written to text
@@ -2244,7 +2289,9 @@ class Decomposition:
         :param x_path: Path to X matrix used. Behaves as param_path for copies/
             symlinks.
         :param symlink: Make symlinks ot param_path and x_path if possible.
-        :param delim: Delimiter to used for tabular output."""
+        :param delim: Delimiter to used for tabular output.
+        :param suppress_plots: Do not create plots for output. Saves time on
+            decompositions with a very large number of samples."""
 
         out_dir = pathlib.Path(out_dir)
         logging.debug("Create decomposition output dir: %s", out_dir)
@@ -2296,6 +2343,8 @@ class Decomposition:
 
         # Attempt to output default plots
         for plot_fn in (x for x in dir(self) if "plot_" in x):
+            if suppress_plots:
+                break
             plt_path: pathlib.Path = out_dir / plot_fn
             logging.debug("Write decomposition plot: %s", plt_path)
             try:
@@ -2323,11 +2372,12 @@ class Decomposition:
             shutil.rmtree(out_dir)
 
     @staticmethod
-    def save_decompositions(decompositions:Dict[int, List[Decomposition]],
+    def save_decompositions(decompositions: Dict[int, List[Decomposition]],
                             output_dir: pathlib.Path,
                             symlink: bool = True,
                             delim: str = "\t",
-                            compress: bool = False) -> None:
+                            compress: bool = False,
+                            **kwargs) -> None:
         """Save multiple decompositions to disk.
 
         Write multiple decompositions to disk. The structure is that a
@@ -2370,7 +2420,8 @@ class Decomposition:
                        param_path=None,
                        x_path=x_path,
                        symlink=symlink,
-                       delim=delim)
+                       delim=delim,
+                       **kwargs)
 
     @staticmethod
     def __load_stream(name: str,
@@ -2387,7 +2438,7 @@ class Decomposition:
                                            index_col=0,
                                            sep=delim)
             # Collapse to series if only a single column
-            res_obj = df if df.shape[1] > 1 else df.iloc[:,0]
+            res_obj = df if df.shape[1] > 1 else df.iloc[:, 0]
         if xtn == "yaml":
             res_obj = yaml.safe_load(stream)
         else:
@@ -2541,7 +2592,6 @@ class Decomposition:
             ]
         return decomps
 
-
     def __getattr__(self, item) -> Any:
         """Allow access to parameter attributes through this class as a
         convenience."""
@@ -2588,8 +2638,8 @@ class Decomposition:
             logging.warning("Some colours are duplicated when plotting over 20 "
                             "signatures")
             return (
-                    (Decomposition.DEFAULT_SCALES[-1] *
-                    math.ceil(n / len(Decomposition.DEFAULT_SCALES)))[:n]
+                (Decomposition.DEFAULT_SCALES[-1] *
+                 math.ceil(n / len(Decomposition.DEFAULT_SCALES)))[:n]
             )
 
 

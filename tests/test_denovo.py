@@ -380,6 +380,18 @@ def test_plot_relative_weight(
     assert pth.exists(), "Plot file not created"
     assert pth.stat().st_size > 0, "Plot file is empty"
 
+def test_plot_feature_weight(
+        tmp_path: pathlib.Path,
+        small_decomposition
+):
+    matplotlib.pyplot.switch_backend("Agg")
+    plt = small_decomposition.plot_feature_weight(threshold=0.02)
+    pth = (tmp_path / "test_feature_weight.png")
+    plt.save(pth)
+    # Test that the file exists and isn't empty
+    assert pth.exists(), "Plot file not created"
+    assert pth.stat().st_size > 0, "Plot file is empty"
+
 
 def test_decompose(small_decomposition):
     """Test that decompose runs, and that Decomposition properties are in 

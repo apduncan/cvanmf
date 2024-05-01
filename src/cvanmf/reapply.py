@@ -694,9 +694,10 @@ def _reapply_model(
         parameters=NMFParameters(
             x=new_abd,
             rank=new_w.shape[1],
-            seed='Reapply',
-        )
+            seed='Reapply'
+        ),
     )
+    decomp.colors = colors
     return decomp
 
 
