@@ -2,7 +2,7 @@
 import itertools
 import pathlib
 import re
-from typing import List, Dict, Iterable
+from typing import List, Dict, Iterable, Tuple
 
 import matplotlib.pyplot
 import numpy as np
@@ -13,7 +13,7 @@ from click.testing import CliRunner
 from cvanmf import models
 from cvanmf.denovo import BicvSplit, BicvFold, bicv, _cosine_similarity, \
     rank_selection, BicvResult, plot_rank_selection, decompose, NMFParameters, \
-    decompositions, Decomposition, cli_rank_selection
+    decompositions, Decomposition, cli_rank_selection, regu_selection
 from cvanmf.reapply import match_identical
 
 
@@ -58,6 +58,18 @@ def small_rank_selection(
         progress_bar=False
     )
 
+@pytest.fixture
+def small_regu_selection(
+        small_overlap_blocks,
+        scope="sesson"
+) -> Tuple[float, Dict[float, List[BicvResult]]]:
+    return regu_selection(
+        x=small_overlap_blocks,
+        rank=3,
+        shuffles=5,
+        seed=4928,
+        progress_bar=False
+    )
 
 @pytest.fixture
 def small_bicv_result(
@@ -309,6 +321,24 @@ def test_rank_selection(small_rank_selection: Dict[int, List[BicvResult]]):
     for res in itertools.chain.from_iterable(small_rank_selection.values()):
         assert isinstance(res, BicvResult)
     # No more checks here, test properties of BicvResult elsewhere
+
+
+def test_regu_selection(
+        small_regu_selection: Tuple[float, Dict[float, List[BicvResult]]]):
+
+    """Test output of a small regularisation selection run. Regularisation
+    selection is actually run in a fixture, so result can be shared between
+    tests."""
+    est, res = small_regu_selection
+    res_num: List[int] = [len(x) for x in res.values()]
+    assert all(x == res_num[0] for x in res_num[1:]), \
+        ("Different numbers of results for some ranks."
+         "Some runs probably failed.")
+    # Check getting correct result types
+    for res in itertools.chain.from_iterable(res.values()):
+        assert isinstance(res, BicvResult)
+    # No more checks here, test properties of BicvResult elsewhere
+
 
 
 def test_to_series(small_bicv_result: BicvResult):

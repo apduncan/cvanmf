@@ -773,7 +773,8 @@ def plot_rank_selection(results: Dict[int, List[BicvResult]],
                         geom: str = 'box',
                         summarise: str = 'mean',
                         jitter: bool = None,
-                        n_col: int = None) -> plotnine.ggplot:
+                        n_col: int = None,
+                        xaxis: str = "rank") -> plotnine.ggplot:
     """Plot rank selection results from bi-cross validation.
 
     Draw either box plots or violin plots showing statistics comparing
@@ -815,7 +816,7 @@ def plot_rank_selection(results: Dict[int, List[BicvResult]],
         name for (name, value) in
         inspect.getmembers(
             BicvResult, lambda x: isinstance(x, collections._tuplegetter))
-    ).difference({"a", "parameters", "i", *exclude}).union({"rank"}))
+    ).difference({"a", "parameters", "i", *exclude}).union({xaxis}))
     # Get results and stack so measure is a column
     df: pd.DataFrame = (
         BicvResult.results_to_table(results, summarise=summarise_fn)[measures]
@@ -823,10 +824,10 @@ def plot_rank_selection(results: Dict[int, List[BicvResult]],
     # Make longer so we have measure as a column
     stacked: pd.DataFrame = (
         df
-        .set_index('rank')
+        .set_index(xaxis)
         .stack(dropna=False)
         .to_frame(name='value')
-        .reset_index(names=["rank", "measure"])
+        .reset_index(names=[xaxis, "measure"])
     )
 
     # Plot
@@ -834,14 +835,14 @@ def plot_rank_selection(results: Dict[int, List[BicvResult]],
             plotnine.ggplot(
                 data=stacked,
                 mapping=plotnine.aes(
-                    x="factor(rank)",
+                    x=f"factor({xaxis})",
                     y="value"
                 )
             )
             + plotnine.facet_wrap(facets="measure", scales="free_y",
                                   ncol=n_col)
             + requested_geom(mapping=plotnine.aes(fill="measure"))
-            + plotnine.xlab("Rank")
+            + plotnine.xlab(xaxis)
             + plotnine.ylab("Value")
             + plotnine.scale_fill_discrete(guide=False)
     )
@@ -853,6 +854,167 @@ def plot_rank_selection(results: Dict[int, List[BicvResult]],
         plot = plot + plotnine.geom_jitter()
 
     return plot
+
+
+def regu_selection(x: pd.DataFrame,
+                   rank: int,
+                   alphas: Optional[Iterable[float], None] = None,
+                   scale_samples: Optional[bool] = None,
+                   shuffles: int = 100,
+                   keep_mats: Optional[bool] = None,
+                   seed: Optional[Union[int, np.random.Generator]] = None,
+                   alpha: Optional[float] = None,
+                   l1_ratio: Optional[float] = 1.0,
+                   max_iter: Optional[int] = None,
+                   beta_loss: Optional[str] = None,
+                   init: Optional[str] = None,
+                   progress_bar: bool = True
+                   ) -> Tuple[float, Dict[float, List[BicvResult]]]:
+    """Bi-cross validation for regularisation selection.
+
+    Run 9-fold bi-cross validation across a range of regularisation ratios,
+    for a single rank. For a brief description of bi-cross validation see
+    :function:`rank_selecton`
+
+    No multiprocessing is used, as a majority of build of scikit-learn
+    make good use of multiple processors anyway.
+
+    This method returns a tuple with
+    * a float which is the tested ratio which meets the critera in
+    the ES paper
+    * a dictionary with each regularisation ratio as a key, and a list
+    containing one :class:`BicvResult` for each shuffle
+
+    Values other than 9 for folds are possible, currently this package only
+    supports 9.
+
+    :param x: Input matrix.
+    :param rank: Ranks of decomposition.
+    :param alphas: Regularisation alpha parameters to be searched. If left
+        blank a default range will be used.
+    :param scale_samples: Divide alpha by number of samples. This is provided
+        as the way regularisation is performed changed in newer sklearn
+        versions, and alpha is multiplieed by n_samples. Setting this to True
+        results in the same calculaton as earlier sklearn versions, such as
+        the one used in the Enterosignatures paper. If this is set it is
+        honoured; if left as None, when automatic alpha range is calculated
+        they will be scaled by sample, when alpha range specified will not be
+        scaled.
+    :param shuffles: Number of times to shuffle `x`.
+    :param keep_mats: Return A' and shuffle as part of results.
+    :param seed: Random value generator or seed for creation of the same.
+        If not provided, will initialise with entropy from system.
+    :param alpha: Regularisation coefficient
+    :param l1_ratio: Ratio between L1 and L2 regularisation. L2 regularisation
+        (1.0) is densifying, L1 (0.0) sparisfying.
+    :param max_iter: Maximum iterations of NMF updates. Will end early if
+        solution converges.
+    :param beta_loss: Beta-loss function, see sklearn documentation for
+        details.
+    :param init: Initialisation method for H and W during decomposition.
+        Used only where one of the matrices during bi-cross steps is not
+        fixed. See sklearn documentation for values.
+    :param progress_bar: Show a progress bar while running.
+    :returns: Dictionary with entry for each rank, containing a list of
+        results for each shuffle (as a :class:`BicvResult` object)
+    """
+    # TODO: Reduce repeated code between this and rank_selection()
+    # Set up a dictionary of arguments
+    args: Dict[str, Any] = {}
+    if keep_mats is not None:
+        args['keep_mats'] = keep_mats
+    if rank is not None:
+        args['rank'] = rank
+    if l1_ratio is not None:
+        args['l1_ratio'] = l1_ratio
+    if max_iter is not None:
+        args['max_iter'] = max_iter
+    if beta_loss is not None:
+        args['beta_loss'] = beta_loss
+    if init is not None:
+        args['init'] = init
+
+    # We need result at alpha 0.0 for later decision on alpha value, so force
+    # selected alphas to include 0. Also do some sanity checking such as
+    # removing negative values.
+    if alphas is None:
+        alphas = [2**i for i in range(-5, 2)]
+        scale_samples = scale_samples if scale_samples is not None else True
+    else:
+        scale_samples = scale_samples if scale_samples is not None else False
+    scale_factor: float = float(x.shape[1]) if scale_samples else 1.0
+    alpha_list: List[float] = [x / scale_factor for x in alphas if x >= 0.0]
+    if 0.0 not in alpha_list:
+        alpha_list = [0] + alpha_list
+
+    # Set up random generator for this whole run
+    rng: np.random.Generator = np.random.default_rng(seed)
+
+    # Generate shuffles of data
+    shuffles: List[BicvSplit] = BicvSplit.from_matrix(x,
+                                                      random_state=rng,
+                                                      n=shuffles)
+
+    # Make a generator of parameter objects to pass to bicv
+    params: List[NMFParameters] = list(itertools.chain.from_iterable(
+        [[NMFParameters(x=x, alpha=a, seed=rng, **args) for x in shuffles]
+         for a in sorted(alpha_list)]
+    ))
+
+    # Get results
+    # No real use in multiprocessing, sklearn implementation generally makes
+    # good use of multiple cores anyway. Multiprocessing just makes processes
+    # compete for resources and is slower.
+    res_map: Iterable = (
+        map(bicv, tqdm(params)) if progress_bar else map(bicv, params))
+    results: List[BicvResult] = sorted(
+        list(res_map),
+        key=lambda x: x.parameters.alpha
+    )
+    # Collect results from the alpha values into lists, and place in a
+    # dictionary with key = alpha
+    grouped_results: Dict[float, List[BicvResult]] = {
+        rank_i: list(list_i) for rank_i, list_i in
+        itertools.groupby(results, key=lambda z: z.parameters.alpha)
+    }
+    # Validate that there are the same number of results for each rank.
+    # Decomposition shouldn't silently fail, but best not to live in a
+    # world of should. Currently deciding to warn user and still return
+    # results.
+    if len(set(len(y) for y in grouped_results.values())) != 1:
+        logging.error(("Uneven number of results returned for each rank, "
+                       "some rank selection iterations may have failed."))
+    # Determine the selected regularisation parameter based on criteria from
+    # the Enterosignatures paper
+    # Calculate MEV at alpha=0.0 and SD of mean
+    # Selected alpha whose MEV is greater than threshold
+    mean_rsq: Dict[float, float] = {
+        alpha: np.concatenate([x.r_squared for x in res]).mean()
+        for alpha, res in grouped_results.items()
+    }
+    sd_zero: float = np.std(
+        np.concatenate(
+            [x.r_squared for x in grouped_results[0.0]]
+        )
+    )
+    threshold: float = mean_rsq[0.0] - sd_zero
+    # TODO: Make this more elegant.
+    # This works for now though
+    best_a: float = sorted(alpha_list)[0]
+    for a in sorted(alpha_list[1:]):
+        if mean_rsq[a] < threshold:
+            break
+        best_a = a
+
+    return (best_a, grouped_results)
+
+
+def plot_regu_selction(**kwargs) -> plotnine.ggplot:
+    """Plot regularisation selection rseults.
+
+    All arguments are as :function:`plot_rank_selection`.
+    """
+    return plot_rank_selection(**kwargs, xaxis="alpha")
 
 
 def bicv(params: Optional[NMFParameters] = None, **kwargs) -> BicvResult:
