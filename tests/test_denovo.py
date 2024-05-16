@@ -2,7 +2,7 @@
 import itertools
 import pathlib
 import re
-from typing import List, Dict, Iterable, Tuple
+from typing import List, Dict, Iterable, Tuple, Set, Optional
 
 import matplotlib.pyplot
 import numpy as np
@@ -191,8 +191,28 @@ def test_bicv_split(small_overlap_blocks):
     assert not all(shuffles[0].x.columns == df.columns), \
         "Columns not shuffled"
 
-    # Get folds
-    shuffles[0].fold(0)
+    # Attempting to initialise with incorrect number of submatrices should
+    # raise an exception
+    with pytest.raises(ValueError):
+        mx8 = list(itertools.chain.from_iterable(shuffles[0].mx))[:-1]
+        _ = BicvSplit(mx8)
+
+    # Getting a row without joining
+    row_list: List[pd.DataFrame] = shuffles[0].row(0, join=False)
+    col_list: List[pd.DataFrame] = shuffles[1].col(0, join=False)
+    assert isinstance(row_list, list), \
+        "Row not returned as list when join=False"
+    assert isinstance(col_list, list), \
+        "Column not returned as list when join=False"
+
+    # Out of range fold
+    with pytest.raises(IndexError):
+        shuffles[0].fold(9)
+
+    folds: List[BicvFold] = shuffles[0].folds
+    assert len(folds) == 9, "Should have 9 folds"
+    assert all([isinstance(x, BicvFold) for x in folds]), \
+        "folds property returns incorrect type"
 
 
 def test_bicv_folds(small_overlap_blocks):
@@ -253,6 +273,10 @@ def test_bicv_split_io(
     # Error on unforced overwrite
     with pytest.raises(FileExistsError):
         shuffles[0].save_npz(tmp_path)
+    with pytest.raises(ValueError):
+        shuffles[0].i, i = None, shuffles[0].i
+        shuffles[0].save_npz(tmp_path, force=True)
+    shuffles[0].i = i
     # Output all with force
     BicvSplit.save_all_npz(shuffles, tmp_path, force=True)
     # Count number of output files
@@ -266,13 +290,24 @@ def test_bicv_split_io(
     assert all(np.isclose(shuffle_0.x.values, shuffles[0].x.values).ravel()), \
         "Loaded object is not equivalent to source object"
     # Load multiple
-    shuffles_loaded: List[BicvSplit] = BicvSplit.load_all_npz(tmp_path)
+    shuffles_loaded: List[BicvSplit] = BicvSplit.load_all_npz(tmp_path,
+                                                              fix_i=True)
     # Should be equal to shuffles
     assert all(
         np.array_equal(a.x.values, b.x.values)
         for a, b in zip(shuffles, shuffles_loaded)
     ), \
         "Loaded matrices not equivalent to those saved"
+
+    # Non-unique values of i
+    shuffles[0].i = shuffles[1].i
+    with pytest.raises(ValueError):
+        BicvSplit.save_all_npz(shuffles, tmp_path, force=True)
+    # fix_i should renumber
+    BicvSplit.save_all_npz(shuffles, tmp_path, force=True, fix_i=True)
+    unique_i: Set[Optional[int]] = set(x.i for x in shuffles)
+    assert len(unique_i) == len(shuffles)
+
 
 
 def test_bicv(small_bicv_result: BicvResult):
@@ -724,3 +759,8 @@ def test_reapply(small_decomposition):
     assert np.allclose(small_decomposition.h, new_decomp.h,
                        atol=0.025), \
         "Signature weights not equal for identical data."
+
+def test_nmf_parameters(small_overlap_blocks):
+    nmf_params: NMFParameters = NMFParameters(small_overlap_blocks, 2)
+    log_str: str = nmf_params.log_str
+    assert len(log_str) > 0, "Parameter log string should not be empty"

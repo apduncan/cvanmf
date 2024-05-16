@@ -28,7 +28,7 @@ import shutil
 import tarfile
 from functools import cached_property
 from typing import (Optional, NamedTuple, List, Iterable, Union, Tuple, Set,
-                    Any, Dict, Callable)
+                    Any, Dict, Callable, Literal)
 
 import click
 import matplotlib.figure
@@ -38,6 +38,7 @@ import patchworklib as pw
 import plotnine
 import yaml
 from scipy.spatial.distance import pdist, squareform
+from skbio import OrdinationResults
 from sklearn import manifold
 from sklearn.decomposition import NMF, non_negative_factorization
 from sklearn.decomposition._nmf import _beta_divergence
@@ -50,6 +51,7 @@ from cvanmf.reapply import InputValidation, FeatureMatch, _reapply_model
 
 # Type aliases
 Numeric = Union[int, float]
+PcoaMatrices = Literal['w', 'x', 'wh', 'signatures']
 """Alias for a python numeric types"""
 
 
@@ -108,7 +110,7 @@ class BicvSplit:
             raise ValueError("Must provide 9 sub-matrices to BicvSplit")
         self.__mx: List[List[pd.DataFrame]] = [
             mx[i:i + 3] for i in range(0, 9, 3)]
-        self.__i: Optional[int] = i
+        self.i = i
 
     # TODO: Read up on how to implement slicing properly
     @property
@@ -131,8 +133,8 @@ class BicvSplit:
         return self.__i
 
     @i.setter
-    def i(self, i: int) -> None:
-        self.__i = int(i)
+    def i(self, i: Optional[int]) -> None:
+        self.__i: Optional[int] = int(i) if i is not None else None
 
     @property
     def shape(self) -> Tuple[int, int]:
@@ -276,7 +278,7 @@ class BicvSplit:
         i_vals: Set[Optional[int]] = set(
             x.i for x in splits
         )
-        if len(i_vals) != len(i_vals) or None in i_vals:
+        if len(i_vals) != len(list(splits)) or None in i_vals:
             # Some non-unique values of i, so all will be renumbered
             logging.warning("Non-unique values of i while saving shuffles")
             if fix_i:
@@ -2334,49 +2336,102 @@ class Decomposition:
         else:
             return plt
 
-    def plot_pcoa(self, **kwargs):
+    def pcoa(self,
+             on: Union[pd.DataFrame, Literal["x", "h", "wh", "signatures"]] = "h",
+             distance: str = 'braycurtis',
+             wisconsin_standardise: bool = True,
+             sqrt: bool = True
+    ) -> OrdinationResults:
+        """Principal Coordinates Analysis of decomposition.
+
+        Performs PCoA on the specified matrix, and results a scikit-bio
+        OrdinationResults object. Can base distances on any matrix which has
+        a column for each sample, or specify one of these via string. Defaults
+        to distances based on scaled h (signature weight in sample) matrix.
+
+        Matrix is Wisconsin double standardised by default, as described in R
+        function `cmdscale`.
+
+        Distance defaults to Bray-Curtis dissimilarity, and is square root
+        transformed. Distance is calculated with scipy pdist function, and any
+        method supported there can be specified in distance argument.
+        """
+
+        from skbio import DistanceMatrix
+        from skbio.stats.ordination import pcoa
+
+        mat: pd.DataFrame = self.__get_pcoa_matrix(on)
+        # If the Decomposition has been sliced, some feature in X or WH
+        # may now have all 0 values. Filter these out before standardisation
+        # as creates NaNs.
+        mat = mat.loc[mat.sum(axis=1) > 0]
+        std_mat: pd.DataFrame = (
+            _wisconsin_double_standardise(mat) if wisconsin_standardise else mat
+        )
+        dist: np.ndarray = squareform(pdist(std_mat.T, metric=distance))
+        dist = np.sqrt(dist) if sqrt else dist
+        dist_mat: DistanceMatrix = DistanceMatrix(
+            dist,
+            ids=std_mat.columns
+        )
+
+        pcoa_res: OrdinationResults = pcoa(dist_mat)
+
+        return pcoa_res
+
+    def __get_pcoa_matrix(
+            self,
+            mat: Union[pd.DataFrame, PcoaMatrices]
+    ) -> pd.DataFrame:
+        if isinstance(mat, str):
+            match mat:
+                case "h":
+                    return self.scaled("h")
+                case "wh":
+                    return self.wh
+                case "x":
+                    return self.parameters.x
+                case "signatures":
+                    return self.scaled("h")
+                case _:
+                    raise ValueError(
+                        "PCoA matrix must be one of h, x, wh, signatures.")
+        elif isinstance(mat, pd.DataFrame):
+            return mat
+        else:
+            raise ValueError("PCoA matrix must be a dataframe or string ("
+                             "h, x, wh, signatures)")
+
+    def plot_pcoa(
+            self,
+            axes: Tuple[int, int] = (0, 1),
+            **kwargs
+    ) -> plotnine.ggplot:
         """Ordination of samples.
 
-        Perform PCoA of samples based on Bray-Curtis dissimilarity. Bray-Curtis
-        dissimilarities are square-root transformed, then Wisconsin double
-        standardised (similar to treatment in R `cmdscale`)
+        Perform PCoA of samples and plot first two axes. PCoA performed by the
+        `pcoa` method, and arguments in kwargs are passed on to this method.
+        Samples are coloured by primary ES.
 
         :return: Scatter plot of samples coloured by primary signature"""
-        logging.info("Wisconsin double standardising data")
-        std_h: pd.DataFrame = self.scaled('h')
-        # Species maximum standardisation - each species max is 1
-        std_h = (std_h.T / std_h.max(axis=1)).T
-        # Sample total standardisation
-        std_h = std_h / std_h.sum()
 
-        logging.info("Calculating Bray-Curtis dissimilarity")
-        dist: np.ndarray = squareform(pdist(std_h.T, metric="braycurtis"))
-        logging.info("Square root transforming dissimilarities")
-        dist = np.sqrt(dist)
+        pcoa_res: OrdinationResults = self.pcoa(**kwargs)
 
-        nmds = manifold.MDS(
-            dissimilarity='precomputed',
-            metric=True,
-            **kwargs
-        )
-        pos: np.ndarray = nmds.fit_transform(dist)
-        pos_df: pd.DataFrame = pd.DataFrame(
-            pos,
-            columns=[f'MDS{i}' for i in range(1, pos.shape[1] + 1)],
-            index=self.h.columns
-        )
+        pos_df: pd.DataFrame = pcoa_res.samples
         pos_df['primary'] = self.primary_signature
         contained_sigs: List[str] = list(set(self.primary_signature))
         color_dict: Dict[str, str] = {n: c for n, c in
                                       dict(zip(self.names, self.colors)).items()
                                       if n in contained_sigs
                                       }
+        axes_str: Tuple[str, str] = tuple(f'PC{i+1}' for i in axes)
+        ax_labels
         plt: plotnine.ggplot = (
                 plotnine.ggplot(
                     pos_df,
-                    plotnine.aes(x="MDS1", y="MDS2", color="primary")
+                    plotnine.aes(x=axes_str[0], y=axes_str[1], color="primary")
                 ) +
-                plotnine.geom_point() +
+                plotnine.geom_point(size=0.2) +
                 plotnine.scale_color_manual(values=list(color_dict.values()),
                                             limits=list(color_dict.keys()),
                                             name="Primary Signature")
@@ -3092,3 +3147,13 @@ def __validate_input_matrix(x: pd.DataFrame) -> None:
     if x.isna().any().any():
         logging.fatal("Loaded matrix contains NaN/NA values")
         raise ValueError("Loaded matrix contains NaN/NA values")
+
+
+def _wisconsin_double_standardise(h: pd.DataFrame) -> pd.DataFrame:
+    """Wisconsin double standardise matrix as per R function cmdscale"""
+    logging.info("Wisconsin double standardising data")
+    # Species maximum standardisation - each species max is 1
+    h = (h.T / h.max(axis=1)).T
+    # Sample total standardisation
+    std_h: pd.DataFrame = h / h.sum()
+    return std_h
