@@ -51,9 +51,20 @@ from cvanmf.reapply import InputValidation, FeatureMatch, _reapply_model
 
 # Type aliases
 Numeric = Union[int, float]
-PcoaMatrices = Literal['w', 'x', 'wh', 'signatures']
 """Alias for a python numeric types"""
+PcoaMatrices = Literal['w', 'x', 'wh', 'signatures']
+"""Allowed matrices which PCoA can be constructed from"""
 
+DEF_SELECTION_ORDERING: List[str] = [
+    "cosine_similarity",
+    "r_squared",
+    "reconstruction_error",
+    "l2_norm",
+    "sparsity_w",
+    "sparsity_h",
+    "rss"
+]
+"""Default ordering for rank selection and regularisation selection plots"""
 
 class BicvFold(NamedTuple):
     """One fold from a shuffled matrix
@@ -770,13 +781,16 @@ def rank_selection(x: pd.DataFrame,
     return grouped_results
 
 
-def plot_rank_selection(results: Dict[int, List[BicvResult]],
+def plot_rank_selection(results: Dict[Union[int, float], List[BicvResult]],
                         exclude: Optional[Iterable[str]] = None,
                         geom: str = 'box',
-                        summarise: str = 'mean',
+                        summarise: Literal['mean', 'median'] = 'mean',
                         jitter: bool = None,
+                        jitter_size: float = 0.3,
                         n_col: int = None,
-                        xaxis: str = "rank") -> plotnine.ggplot:
+                        xaxis: str = "rank",
+                        rotate_x_labels: Optional[float] = None
+                        ) -> plotnine.ggplot:
     """Plot rank selection results from bi-cross validation.
 
     Draw either box plots or violin plots showing statistics comparing
@@ -791,8 +805,13 @@ def plot_rank_selection(results: Dict[int, List[BicvResult]],
     :param summarise: How to summarise the statistics across the folds
         of a given shuffle.
     :param jitter: Draw individual points for each shuffle above the main plot.
+    :param jitter_size: Size of jitter points.
     :param n_col: Number of columns in the plot. If blank, attempts to guess
         a sensible value.
+    :param xaxis: Value to plot along the x-axis. "rank" for rank selection,
+        "alpha" for regularisation selection.
+    :param rotate_x_labels: Degrees to rotate x-axis labels by. If None
+        will rotate if x-axis is float.
     :return: :class:`plotnine.ggplot` instance
     """
     # Intended a user friendly interface to plot rank selection results
@@ -831,6 +850,16 @@ def plot_rank_selection(results: Dict[int, List[BicvResult]],
         .to_frame(name='value')
         .reset_index(names=[xaxis, "measure"])
     )
+    # Make an ordering for the measures to be included
+    measures: Set[str] = set(stacked['measure'].unique())
+    facet_order: List[str] = [x for x in DEF_SELECTION_ORDERING if x in
+                              measures]
+    facet_order += list(measures.difference(set(facet_order)))
+    stacked['measure'] = pd.Categorical(
+        stacked['measure'],
+        ordered=True,
+        categories=facet_order
+    )
 
     # Plot
     plot: plotnine.ggplot = (
@@ -849,11 +878,26 @@ def plot_rank_selection(results: Dict[int, List[BicvResult]],
             + plotnine.scale_fill_discrete(guide=False)
     )
 
+    # Determine whether the xaxis values are floats, and so axis labels should
+    # be rounded for display
+    xaxis_float: bool = np.issubdtype(stacked[xaxis].dtype, np.floating)
+    if xaxis_float:
+        rotate_x_labels = 90.0 if rotate_x_labels is None else rotate_x_labels
+        plot = (
+            plot
+            + plotnine.scale_x_discrete(
+                labels=lambda x: [f'{i:.2e}' for i in x]
+            )
+            + plotnine.theme(
+                axis_text_x=plotnine.element_text(rotation=rotate_x_labels)
+            )
+        )
+
     # If not specifically requested, decide whether to add a jitter
     if jitter is None:
-        jitter = False if len(list(results.values())[0]) > 150 else True
+        jitter = False if len(list(results.values())[0]) > 50 else True
     if jitter:
-        plot = plot + plotnine.geom_jitter()
+        plot = plot + plotnine.geom_jitter(size=jitter_size)
 
     return plot
 
@@ -1011,12 +1055,36 @@ def regu_selection(x: pd.DataFrame,
     return (best_a, grouped_results)
 
 
-def plot_regu_selction(**kwargs) -> plotnine.ggplot:
-    """Plot regularisation selection rseults.
+def plot_regu_selection(
+        regu_res: Union[Tuple[float, Dict], Dict],
+        **kwargs
+) -> plotnine.ggplot:
+    """Plot regularisation selection results.
 
-    All arguments are as :function:`plot_rank_selection`.
+    Takes a result from :function:`regu_selection` and passes to
+    :function:`plot_rank_selection` to plot with alpha values along the
+    xaxis. Consequently, pass any parameters for plotting as kwargs.
     """
-    return plot_rank_selection(**kwargs, xaxis="alpha")
+
+    # regu_selection returns a tuple with best alpha value and dictionary of
+    # results. Users might pass either the tuple or the dict in, so handle both.
+    # Primarily, this is as I kept forgetting to only pass the dict and it
+    # annoyed me.
+    pass_res: Dict[float, List[BicvResult]] = {}
+    if isinstance(regu_res, tuple):
+        if not len(regu_res) == 2:
+            raise ValueError("Unexpected regularisation result tuple format, "
+                             "expected length 2 tuple with float, dict.")
+        if not isinstance(regu_res[1], dict):
+            raise ValueError("Unexpected regularisation result tuple format, "
+                             "expected length 2 tuple with float, dict.")
+        pass_res = regu_res[1]
+    elif isinstance(regu_res, dict):
+        pass_res = regu_res
+    else:
+        raise ValueError("Unexpected regularisation result format, expected "
+                         "either dict, or tuple of float, dict.")
+    return plot_rank_selection(**kwargs, results=pass_res, xaxis="alpha")
 
 
 def bicv(params: Optional[NMFParameters] = None, **kwargs) -> BicvResult:
@@ -2211,9 +2279,9 @@ class Decomposition:
             .to_frame("weight")
             .reset_index(names=["sample", "signature"])
         )
-        # Plotnine by default sorts categorical axis labels. Want to retain the sample
-        # ordering provide, as there is likely some sensible structure in how the user
-        # arranged them.
+        # Plotnine by default sorts categorical axis labels. Want to retain the
+        # sample ordering provide, as there is likely some sensible structure in
+        # how the user arranged them.
         ordered_scale: plotnine.scale_x_discrete = plotnine.scale_x_discrete(
             limits=rel_df['sample']
         )
@@ -2231,14 +2299,14 @@ class Decomposition:
                 plotnine.scale_fill_manual(self.colors,
                                            name="Signature") +
                 plotnine.theme(axis_text_x=plotnine.element_text(angle=90),
-                               legend_position="bottom",
+                               legend_position="right",
                                legend_title_align="center") +
                 ordered_scale
         )
-        # There are two optional components to this plot, a point indicating model
-        # fit, and a ribbon indicating category membership. These are made separately
-        # and the patchworked together. The plot object are initialised to None,
-        # and set to a ggplot if requested
+        # There are two optional components to this plot, a point indicating
+        # model fit, and a ribbon indicating category membership. These are
+        # made separately and then patchworked together. The plot object are
+        # initialised to None, and set to a ggplot if requested
         plt_ribbon: Optional[plotnine.ggplot] = None
         plt_mfp: Optional[plotnine.ggplot] = None
         small_yaxis_lbls: plotnine.theme = plotnine.theme(
@@ -2249,7 +2317,7 @@ class Decomposition:
             axis_text_x=plotnine.element_text(size=5),
         )
 
-        # Display categorical grouping as geom_tile - similar to the ribbon in
+        # Display categorical grouping as geom_col - similar to the ribbon in
         # seaborn. Make as a separate figure and put together with patchworklib
         if group is not None:
             if not isinstance(group, pd.Series):
@@ -2318,7 +2386,8 @@ class Decomposition:
                         ordered_scale
                 )
             stack: List = [
-                pw.load_ggplot(plt_mfp, figsize=(6, .5)) if plt_mfp is not None else None,
+                pw.load_ggplot(plt_mfp, figsize=(6, .5)) if plt_mfp is not
+                                                            None else None,
                 pw.load_ggplot(plt, figsize=(6, 4)),
                 (pw.load_ggplot(plt_ribbon, figsize=(6, .2))
                  if plt_ribbon is not None else None)
@@ -2405,6 +2474,8 @@ class Decomposition:
     def plot_pcoa(
             self,
             axes: Tuple[int, int] = (0, 1),
+            color: Union[pd.Series, Literal['signature']] = "signature",
+            shape: Optional[Union[pd.Series, Literal['signature']]] = None,
             **kwargs
     ) -> plotnine.ggplot:
         """Ordination of samples.
@@ -2425,7 +2496,6 @@ class Decomposition:
                                       if n in contained_sigs
                                       }
         axes_str: Tuple[str, str] = tuple(f'PC{i+1}' for i in axes)
-        ax_labels
         plt: plotnine.ggplot = (
                 plotnine.ggplot(
                     pos_df,

@@ -13,7 +13,8 @@ from click.testing import CliRunner
 from cvanmf import models
 from cvanmf.denovo import BicvSplit, BicvFold, bicv, _cosine_similarity, \
     rank_selection, BicvResult, plot_rank_selection, decompose, NMFParameters, \
-    decompositions, Decomposition, cli_rank_selection, regu_selection
+    decompositions, Decomposition, cli_rank_selection, regu_selection, \
+    plot_regu_selection
 from cvanmf.reapply import match_identical
 
 
@@ -408,6 +409,20 @@ def test_plot_rank_selection(
     res_df: pd.DataFrame = BicvResult.results_to_table(res)
     plt = plot_rank_selection(res, exclude=None, geom="box")
     pth = (tmp_path / "test_rank_sel.png")
+    plt.save(pth)
+    # Test that the file exists and isn't empty
+    assert pth.exists(), "Plot file not created"
+    assert pth.stat().st_size > 0, "Plot file is empty"
+
+
+def test_plot_regu_selection(
+        tmp_path: pathlib.Path,
+        small_regu_selection
+):
+    best_alpha, res = small_regu_selection
+    plt = plot_regu_selection(small_regu_selection,
+                              exclude=None, geom="box")
+    pth = (tmp_path / "test_regu_sel.png")
     plt.save(pth)
     # Test that the file exists and isn't empty
     assert pth.exists(), "Plot file not created"

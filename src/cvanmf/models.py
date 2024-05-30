@@ -2,10 +2,18 @@
 import logging
 import math
 from importlib.resources import files
-from typing import NamedTuple, List, Optional, Callable, Dict, Any
+from typing import NamedTuple, List, Optional, Callable, Dict, Any, Union
 
 import numpy as np
 import pandas as pd
+
+FIVE_ES_COLORS = {
+    "ES_Bact": "#E69F00",
+    "ES_Firm": "#023e8a",
+    "ES_Prev": "#D55E00",
+    "ES_Bifi": "#009E73",
+    "ES_Esch": "#483838"
+}
 
 
 class Signatures(NamedTuple):
@@ -19,7 +27,7 @@ class Signatures(NamedTuple):
     features in the new data with those in the W matrix)."""
     w: pd.DataFrame
     """Feature weights (W matrix) for this model."""
-    colors: List[str]
+    colors: Union[List[str], Dict[str, str]]
     """Color for each signature in the model."""
     feature_match: 'FeatureMatch'
     """Function to map features in new data to those in the model W matrix."""
@@ -59,7 +67,7 @@ def five_es() -> Signatures:
     )
     from cvanmf import reapply
     return Signatures(w=w,
-                      colors=None,
+                      colors=FIVE_ES_COLORS,
                       feature_match=reapply.match_genera,
                       input_validation=reapply.validate_genus_table,
                       citation=(
@@ -145,4 +153,3 @@ def synthetic_data(m: int = 100,
         block_mat,
         index=[f'feat_{i_lab}' for i_lab in range(i)],
         columns=[f'samp_{j_lab}' for j_lab in range(j)])
-

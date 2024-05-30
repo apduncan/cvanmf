@@ -24,6 +24,21 @@ def test_five_es() -> None:
     assert not res.h.isna().any().any(), \
         "NA values in reapplied results"
 
+
+def test_reapply() -> None:
+    """Can a model be applied to new data and retain the right properties."""
+    esm: Signatures = five_es()
+    # Make some dummy data to fit to the 5 ES model
+    h: np.ndarray = np.random.uniform(low=0, high=1, size=[5, 15])
+    wh: pd.DataFrame = esm.w.dot(h)
+    wh.columns = [f"SMPL_{i}" for i in wh.columns]
+    new_decomp: Decomposition = esm.reapply(wh)
+    assert isinstance(new_decomp, Decomposition), "Reapply returned wrong type."
+    assert dict(
+        zip(new_decomp.names, new_decomp.colors)
+    ) == esm.colors, "Colors not retained when reapplied."
+
+
 def test_example_abundance() -> None:
     """Load the example data and check it has the right properties."""
 
