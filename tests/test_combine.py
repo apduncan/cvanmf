@@ -9,14 +9,17 @@ import pytest
 
 import cvanmf.models
 from cvanmf import models
-from cvanmf.combine import align_signatures, compare_signatures, match_signatures, combine_signatures, Cohort, Model, \
-    Signature, Combiner, Cluster
+from cvanmf.combine import align_signatures, compare_signatures, \
+    match_signatures, combine_signatures, Cohort, Model, \
+    Signature, Combiner, Cluster, split_dataframe_to_cohorts
 from cvanmf.denovo import NMFParameters, decompositions, Decomposition
 from cvanmf.models import Signatures
+
 
 @pytest.fixture(scope="module", autouse=True)
 def pyplot_backend():
     matplotlib.pyplot.switch_backend("Agg")
+
 
 @pytest.fixture(scope="session")
 def complex_cohort_structure() -> Dict[str, pd.DataFrame]:
@@ -209,8 +212,9 @@ def test_combine_signatures():
 def test_experiment():
     # Temp function - see how splitting the DRAMA data goes
     es_x = pd.read_csv(
-        ("https://gitlab.inria.fr/cfrioux/enterosignature-paper/-/raw/main/data/"
-         "GMR_dataset/GMR_genus_level_abundance_normalised.tsv?ref_type=heads"),
+        (
+            "https://gitlab.inria.fr/cfrioux/enterosignature-paper/-/raw/main/data/"
+            "GMR_dataset/GMR_genus_level_abundance_normalised.tsv?ref_type=heads"),
         sep="\t").iloc[:, :]
     cohorts_arr = np.random.randint(low=0, high=20, size=(es_x.shape[1]))
     cohorts = []
@@ -259,8 +263,9 @@ def test_experiment2(complex_cohort_structure: List[pd.DataFrame]):
 def test_experiment3():
     # Temp function - see how splitting the DRAMA data goes
     es_x = pd.read_csv(
-        ("https://gitlab.inria.fr/cfrioux/enterosignature-paper/-/raw/main/data/"
-         "GMR_dataset/GMR_genus_level_abundance_normalised.tsv?ref_type=heads"),
+        (
+            "https://gitlab.inria.fr/cfrioux/enterosignature-paper/-/raw/main/data/"
+            "GMR_dataset/GMR_genus_level_abundance_normalised.tsv?ref_type=heads"),
         sep="\t").iloc[:, :]
     mmodels = decompositions(es_x,
                              ranks=[5],
@@ -327,12 +332,14 @@ def test_rewrite():
         return [
             x.split(";")[-1] for x in tax_list
         ]
+
     plt_featclust = c.plot_feature_variance(True, 20, end_tax)
-    plt_featclust.save("/Users/pez23lof/test_clustfeat_postdrama_k5.png", height=12,
+    plt_featclust.save("/Users/pez23lof/test_clustfeat_postdrama_k5.png",
+                       height=12,
                        width=20, dpi=200)
     plt_clustsi = c.plot_member_similarity(True)
     plt_clustsi.save("/Users/pez23lof/test_clustsi_postdrama_k5.png", height=12,
-                       width=20, dpi=200)
+                     width=20, dpi=200)
     print(match)
     foo = 'bar'
 
@@ -341,15 +348,15 @@ def test_rewrite_rank_sloppy():
     # How sloppy can we be about rank selection?
     es_x = pd.read_csv(
         ("~/Downloads/GMR_genus_level_abundance_normalised.tsv"),
-        sep="\t").iloc[:,:]
+        sep="\t").iloc[:, :]
     mmodels = decompositions(es_x,
-                              ranks=[6],
-                              random_starts=100,
-                              top_n=50,
-                              seed=4298
-                              )
+                             ranks=[6],
+                             random_starts=100,
+                             top_n=50,
+                             seed=4298
+                             )
     amodels = [Model().add_signatures(Signature.from_comparable(c)) for
-              c in itertools.chain.from_iterable(mmodels.values())]
+               c in itertools.chain.from_iterable(mmodels.values())]
     cohort_obj = Cohort(name="COH_1", x=es_x)
     cohort_obj.add_models(amodels)
     c = Combiner([cohort_obj])
@@ -365,10 +372,12 @@ def test_rewrite_rank_sloppy():
     # c.clusters[0].plot_member_similarity(split_cohort=False)
     c.label_by_match(models.five_es())
     plt_feat = c.plot_feature_variance(top_n=20,
-                                       label_fn=lambda x: [y.split(";")[-1] for y in x])
+                                       label_fn=lambda x: [y.split(";")[-1] for
+                                                           y in x])
     plt_sim = c.plot_member_similarity()
     print(match)
     foo = 'bar'
+
 
 def test_rewrite_synthetic(complex_cohort_structure: Dict[str, pd.DataFrame]):
     # Decompositions
@@ -398,3 +407,21 @@ def test_rewrite_synthetic(complex_cohort_structure: Dict[str, pd.DataFrame]):
     c.label_by_match(cvanmf.models.five_es())
     plot = c.plot_mds()
     foo = 'bar'
+
+
+def test_split_dataframe_to_cohorts():
+    smpl_names: List[str] = (
+            [f'CA_S{i}' for i in range(10)] +
+            [f'CB_S{i}' for i in range(20)] +
+            [f'CC_S{i}' for i in range(3)]
+    )
+    smpl_cohorts: List[str] = [x[1] for x in smpl_names]
+    cohort_series: pd.Series = pd.Series(smpl_cohorts, index=smpl_names)
+    df: pd.DataFrame = pd.DataFrame(
+        np.random.uniform(size=(100, len(smpl_names))),
+        columns=smpl_names
+    )
+    cohort_dict: Dict = split_dataframe_to_cohorts(df, cohort_series,
+                                                   min_size=5)
+    assert len(cohort_dict) == 2
+

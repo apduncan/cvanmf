@@ -28,12 +28,13 @@ import shutil
 import tarfile
 from functools import cached_property
 from typing import (Optional, NamedTuple, List, Iterable, Union, Tuple, Set,
-                    Any, Dict, Callable, Literal)
+                    Any, Dict, Callable, Literal, Hashable)
 
 import click
 import matplotlib.figure
 import numpy as np
 import pandas as pd
+import patchworklib
 import patchworklib as pw
 import plotnine
 import yaml
@@ -65,6 +66,18 @@ DEF_SELECTION_ORDERING: List[str] = [
     "rss"
 ]
 """Default ordering for rank selection and regularisation selection plots"""
+DEF_PCOA_POINT_AES: Dict[str, Any] = dict(
+    size=2,
+    alpha=0.8
+)
+"""Default geom_point fixed aesthetics for PCoA plots"""
+DEF_RELATIVE_WEIGHT_HEIGHTS: Dict[str, float] = dict(
+    bar=6.0,
+    ribbon=.5,
+    dot=.5
+)
+"""Default heights for relative weight plot"""
+
 
 class BicvFold(NamedTuple):
     """One fold from a shuffled matrix
@@ -123,7 +136,7 @@ class BicvSplit:
             mx[i:i + 3] for i in range(0, 9, 3)]
         self.i = i
 
-    # TODO: Read up on how to implement slicing properly
+    # TODO: Better slicing implementation
     @property
     def mx(self) -> List[List[pd.DataFrame]]:
         """Submatrices as a 2d list."""
@@ -423,8 +436,10 @@ class BicvSplit:
             while col < 3:
                 done += 1
                 all_sub_matrices[done - 1] = df.iloc[
-                                             thresholds_feat[row]:thresholds_feat[row + 1],
-                                             thresholds_sample[col]: thresholds_sample[col + 1]
+                                             thresholds_feat[row]:
+                                             thresholds_feat[row + 1],
+                                             thresholds_sample[col]:
+                                             thresholds_sample[col + 1]
                                              ]
                 col += 1
             row += 1
@@ -884,13 +899,13 @@ def plot_rank_selection(results: Dict[Union[int, float], List[BicvResult]],
     if xaxis_float:
         rotate_x_labels = 90.0 if rotate_x_labels is None else rotate_x_labels
         plot = (
-            plot
-            + plotnine.scale_x_discrete(
-                labels=lambda x: [f'{i:.2e}' for i in x]
-            )
-            + plotnine.theme(
-                axis_text_x=plotnine.element_text(rotation=rotate_x_labels)
-            )
+                plot
+                + plotnine.scale_x_discrete(
+            labels=lambda x: [f'{i:.2e}' for i in x]
+        )
+                + plotnine.theme(
+            axis_text_x=plotnine.element_text(rotation=rotate_x_labels)
+        )
         )
 
     # If not specifically requested, decide whether to add a jitter
@@ -984,7 +999,7 @@ def regu_selection(x: pd.DataFrame,
     # selected alphas to include 0. Also do some sanity checking such as
     # removing negative values.
     if alphas is None:
-        alphas = [2**i for i in range(-5, 2)]
+        alphas = [2 ** i for i in range(-5, 2)]
         scale_samples = scale_samples if scale_samples is not None else True
     else:
         scale_samples = scale_samples if scale_samples is not None else False
@@ -1991,6 +2006,28 @@ class Decomposition:
         """
         return self.__feature_mapping
 
+    @property
+    def color_scale(self) -> plotnine.scale_color_discrete:
+        """Plotnine scale for color aesthetic using signature colors"""
+        color_dict: Dict[str, str] = dict(zip(
+            self.names, self.colors))
+        color_scale = plotnine.scale_color_manual(
+            values=list(color_dict.values()),
+            limits=list(color_dict.keys())
+        )
+        return color_scale
+
+    @property
+    def fill_scale(self) -> plotnine.scale_fill_discrete:
+        """Plotnine scale for fill aesthetic using signature colors"""
+        color_dict: Dict[str, str] = dict(zip(
+            self.names, self.colors))
+        fill_scale = plotnine.scale_fill_manual(
+            values=list(color_dict.values()),
+            limits=list(color_dict.keys())
+        )
+        return fill_scale
+
     def representative_signatures(self, threshold: float = 0.9) -> pd.DataFrame:
         """Which signatures describe a sample.
 
@@ -2167,6 +2204,64 @@ class Decomposition:
         from cvanmf.combine import match_signatures
         return match_signatures(self, b)
 
+    def name_signatures_by_weight(
+            self,
+            cumulative_sum: float = 0.4,
+            max_char_length: int = 10,
+            max_num_features: int = 5,
+            feature_delimiter: str = '+',
+            number: bool = True,
+            clean: Callable[[str], str] = lambda x: x.replace(' ', '_')
+    ) -> None:
+        """Give a slightly more descriptive name to each signature.
+
+        Append features with highest relative weights to the end of
+        signature names. This alters the object in place.
+
+        :param cumulative_sum: Add features up to this cumulative sum (from
+            max to min).
+        :param max_char_length: Maximum length of new name (before joining
+            with feature delimiter.
+        :param max_num_features: Maximum number of features to use in name.
+        :param feature_delimiter: When multiple features used, will join with
+            this character
+        :param number: Number the signatures. When true, starts each new name
+            with S1, S2, etc.
+        :param clean: Function to clean the string. Defaults to replacing
+            spaces with underscores.
+        """
+
+        repr_features: pd.DataFrame = self.scaled('w').apply(
+            Decomposition.__representative_signatures, threshold=cumulative_sum
+        )
+        rep_weight: pd.DataFrame = self.scaled('w') * repr_features
+
+        def build_signature(sig_series: pd.Series) -> str:
+            feat_list: List[str] = list(
+                sig_series
+                .sort_values(ascending=False)
+                .iloc[:min(max_num_features, len(sig_series)) - 1]
+                .index
+            )
+            feat_list = feat_list[:min(max_num_features, len(feat_list))]
+            use_list: List[str] = [feat_list[0]]
+            if len(feat_list) > 1:
+                for new in feat_list[1:]:
+                    if (sum(map(len, use_list)) + len(new)) > max_char_length:
+                        break
+                    else:
+                        use_list.append(new)
+            sig_str: str = clean(feature_delimiter.join(use_list))
+            return sig_str
+
+        signature_series = rep_weight.apply(build_signature)
+        signature_series = [x[:min(len(x), max_char_length)] for x
+                            in signature_series]
+        if number:
+            signature_series = [f'S{i + 1}_{name}' for i, name
+                                in enumerate(signature_series)]
+        self.names = list(signature_series)
+
     def plot_modelfit(self,
                       group: Optional[pd.Series] = None,
                       ) -> plotnine.ggplot:
@@ -2264,13 +2359,73 @@ class Decomposition:
                    ))
         return plt
 
-    def plot_relative_weight(self,
-                             group: Optional[Union[pd.Series, Iterable]] = None,
-                             group_sort: bool = True,
-                             model_fit: bool = True,
-                             **kwargs
-                             ) -> plotnine.ggplot:
-        """Plot relative weight of each signature in each sample."""
+    def plot_relative_weight(
+            self,
+            group: Optional[Union[pd.Series, Iterable]] = None,
+            model_fit: bool = True,
+            heights: Union[Dict[str, float], Iterable[float]] = None,
+            width: float = 6.0,
+            sample_label_size: float = 5.0,
+            **kwargs
+    ) -> Union[plotnine.ggplot, pw.Bricks]:
+        """Plot relative weight of each signature in each sample.
+
+        Plots a stacked bar chart with a bar for each sample displaying the
+        relative weight of each signature. Optionally the plot can also
+        include a section at the top summarising the model fit for each
+        sample, and a ribbon along the bottom display categorical metadata
+        for samples.
+
+        This uses patchworklib for putting together multiple plotnine plots,
+        so when adding either top or bottom element will return a Bricks item.
+        Patchworklib can be slow for large plots.
+
+        :param group: Categorical metadata for each sample to plot on ribbon
+            at the bottom
+        :param model_fit: Include a top row indicating model fit per sample
+        :param heights: Height in inches for each component of the plot. Only
+            used when including model fit or ribbon. Specify as a dictionary
+            with keys 'dot', 'bar', or 'ribbon', or a list with heights for
+            the elements included from top to bottom.
+        :param width: Width used when combining multiple elements
+        :param sample_label_size: Size for sample labels. Set to 0 to remove
+            sample labels.
+        :return: A plotnine ggplot or patchwork Bricks object
+        """
+
+        # Parse height arguments
+        if heights is not None:
+            if isinstance(heights, dict):
+                unex_keys: Set[str] = (
+                    set(heights.keys())
+                    .difference(DEF_RELATIVE_WEIGHT_HEIGHTS.keys())
+                )
+                if len(unex_keys) > 0:
+                    logging.warning(
+                        "Unexpected key(s) in heights: %s. Expecting: %s.",
+                        heights.keys(),
+                        DEF_RELATIVE_WEIGHT_HEIGHTS.keys()
+                    )
+            else:
+                parts: List[str] = [x for x in [
+                    'dot' if model_fit else None,
+                    'bar',
+                    'ribbon' if group is not None else None
+                    ] if x is not None]
+                vals: List[float] = list(heights)
+                if len(parts) != len(vals):
+                    logging.warning(
+                        "Passed %s heights when plot has %s parts (%s)",
+                        len(vals),
+                        len(parts),
+                        parts
+                    )
+                m: int = min(map(len, (parts, vals)))
+                vals, parts = vals[:m], parts[:m]
+                heights = dict(zip(parts, vals))
+        else:
+            heights = {}
+        heights = DEF_RELATIVE_WEIGHT_HEIGHTS | heights
 
         rel_df: pd.DataFrame = (
             self.scaled('h')
@@ -2314,8 +2469,14 @@ class Decomposition:
             axis_title_y=plotnine.element_text(size=7)
         )
         small_xaxis_lbls: plotnine.theme = plotnine.theme(
-            axis_text_x=plotnine.element_text(size=5),
+            axis_text_x=plotnine.element_text(size=sample_label_size),
         )
+        if sample_label_size <= 0.0:
+            small_xaxis_lbls = plotnine.theme(
+                axis_text_x=plotnine.element_blank(),
+                axis_ticks_minor_x=plotnine.element_blank(),
+                axis_ticks_major_x=plotnine.element_blank()
+            )
 
         # Display categorical grouping as geom_col - similar to the ribbon in
         # seaborn. Make as a separate figure and put together with patchworklib
@@ -2327,6 +2488,34 @@ class Decomposition:
                 .to_frame("group")
                 .reset_index(names=["sample"])
             )
+            # Restrict to only the entries in the decomposition. Warn if
+            # any lost from either metadata, or sample lacking metadata
+            md_only, shared, decomp_only = _set_intersect_and_difference(
+                group_df['sample'], self.h.columns
+            )
+            # Warn if any mismatches
+            if len(md_only) > 0:
+                logging.warning(
+                    "Metadata for %s samples had no match in decomposition. "
+                    "Check indices if you were expecting all to match.",
+                    len(md_only)
+                )
+            if len(decomp_only) > 0:
+                group_df = pd.concat(
+                    [group_df,
+                     pd.DataFrame(
+                         [(x, np.nan) for x in decomp_only],
+                         columns=['sample', 'group']
+                     )]
+                )
+                logging.warning(
+                    "%s samples in decomposition had no metadata, has been "
+                    "filled with NaN. Check indices if you were expecting all "
+                    "to match", len(decomp_only)
+                )
+            group_df = group_df.loc[group_df['sample'].isin(self.h.columns)]
+
+            # Log if any entries dropped from metadata
             # Sort primarily by group, but beyond that retain input ordering
             group_df['input_order'] = range(group_df.shape[0])
             group_df = group_df.sort_values(by=['group', 'input_order'],
@@ -2385,11 +2574,14 @@ class Decomposition:
                         ) +
                         ordered_scale
                 )
+                plt_ribbon = plt_ribbon + small_xaxis_lbls
+            h_dot, h_bar, h_ribbon = (heights['dot'], heights['bar'],
+                                      heights['ribbon'])
             stack: List = [
-                pw.load_ggplot(plt_mfp, figsize=(6, .5)) if plt_mfp is not
-                                                            None else None,
-                pw.load_ggplot(plt, figsize=(6, 4)),
-                (pw.load_ggplot(plt_ribbon, figsize=(6, .2))
+                (pw.load_ggplot(plt_mfp, figsize=(width, h_dot))
+                 if plt_mfp is not None else None),
+                pw.load_ggplot(plt, figsize=(width, h_bar)),
+                (pw.load_ggplot(plt_ribbon, figsize=(width, h_ribbon))
                  if plt_ribbon is not None else None)
             ]
             stack = [x for x in stack[::-1] if x is not None]
@@ -2406,11 +2598,12 @@ class Decomposition:
             return plt
 
     def pcoa(self,
-             on: Union[pd.DataFrame, Literal["x", "h", "wh", "signatures"]] = "h",
+             on: Union[
+                 pd.DataFrame, Literal["x", "h", "wh", "signatures"]] = "h",
              distance: str = 'braycurtis',
              wisconsin_standardise: bool = True,
              sqrt: bool = True
-    ) -> OrdinationResults:
+             ) -> OrdinationResults:
         """Principal Coordinates Analysis of decomposition.
 
         Performs PCoA on the specified matrix, and results a scikit-bio
@@ -2424,6 +2617,12 @@ class Decomposition:
         Distance defaults to Bray-Curtis dissimilarity, and is square root
         transformed. Distance is calculated with scipy pdist function, and any
         method supported there can be specified in distance argument.
+
+        :param on: Matrix to derive distances from
+        :param distance: Distance method to use
+        :param wisconsin_standardise: Apply Wisconsin double standardisation
+        :param sqrt: Square root transform distances
+        :return: PCoA results object from scikit-bio
         """
 
         from skbio import DistanceMatrix
@@ -2471,11 +2670,47 @@ class Decomposition:
             raise ValueError("PCoA matrix must be a dataframe or string ("
                              "h, x, wh, signatures)")
 
+    @staticmethod
+    def __compare_str_series(
+            str_series: Optional[Union[str, pd.Series]],
+            comp_to: str
+    ):
+        """Compare an abject which could be a series or str to a str."""
+        if isinstance(str_series, pd.Series):
+            return False
+        return str_series == comp_to
+
+    @staticmethod
+    def __set_guide_name(
+            plt: plotnine.ggplot,
+            guide: str,
+            option: Optional[Union[str, pd.Series]],
+            compare_to: str,
+            lbl_if_match: str = None
+    ) -> plotnine.ggplot:
+        """Set a guide name based on whether value (or the name of value)
+        matches compare_to."""
+        lbl: str
+        if Decomposition.__compare_str_series(option, compare_to):
+            lbl = lbl_if_match
+        elif isinstance(option, pd.Series):
+            lbl = guide if option.name is None else option.name
+        else:
+            lbl = guide
+        guide_dict: Dict[str, Any] = {
+            guide: plotnine.guide_legend(title=lbl)
+        }
+        return (
+                plt +
+                plotnine.guides(**guide_dict)
+        )
+
     def plot_pcoa(
             self,
             axes: Tuple[int, int] = (0, 1),
             color: Union[pd.Series, Literal['signature']] = "signature",
             shape: Optional[Union[pd.Series, Literal['signature']]] = None,
+            point_aes: Dict[str, Any] = None,
             **kwargs
     ) -> plotnine.ggplot:
         """Ordination of samples.
@@ -2484,28 +2719,79 @@ class Decomposition:
         `pcoa` method, and arguments in kwargs are passed on to this method.
         Samples are coloured by primary ES.
 
-        :return: Scatter plot of samples coloured by primary signature"""
+        :param axes: Indices of axes to plot
+        :param color: Metadata to use to color the points, or 'signature' to
+            color based on the primary signature
+        :param shape:  Metadata to used to decide shape of points,
+            or 'signature' to base shape on the primary signature
+        :param point_aes: Dictionary of arguments to pass to geom_point
+        :param kwargs: arguments to pass to :method:`pcoa`
+        :return: Scatter plot of samples
+        """
+
+        point_aes = point_aes if point_aes is not None else {}
 
         pcoa_res: OrdinationResults = self.pcoa(**kwargs)
 
         pos_df: pd.DataFrame = pcoa_res.samples
         pos_df['primary'] = self.primary_signature
-        contained_sigs: List[str] = list(set(self.primary_signature))
-        color_dict: Dict[str, str] = {n: c for n, c in
-                                      dict(zip(self.names, self.colors)).items()
-                                      if n in contained_sigs
-                                      }
-        axes_str: Tuple[str, str] = tuple(f'PC{i+1}' for i in axes)
+        axes_str: Tuple[str, str] = tuple(f'PC{i + 1}' for i in axes)
+
+        # Color and shape
+        aes_dict: Dict[str, str] = dict(
+            x=axes_str[0],
+            y=axes_str[1],
+            color="color"
+        )
+        pos_df['color'] = (
+            pos_df['primary'] if Decomposition.__compare_str_series(
+                color, "signature") else
+            color.loc[pos_df.index]
+        )
+        if shape is not None:
+            pos_df['shape'] = (
+                pos_df['primary'] if Decomposition.__compare_str_series(
+                    shape, "signature") else shape.loc[pos_df.index]
+            )
+            aes_dict['shape'] = "shape"
+        # If using primary signatures for colour, use object default colours
+        color_scale: Optional[plotnine.scale_color_manual] = None
+        if Decomposition.__compare_str_series(color, "signature"):
+            contained_sigs: List[str] = list(set(self.primary_signature))
+            color_dict: Dict[str, str] = {n: c for n, c in
+                                          dict(zip(self.names,
+                                                   self.colors)).items()
+                                          if n in contained_sigs
+                                          }
+            color_scale = plotnine.scale_color_manual(
+                values=list(color_dict.values()),
+                limits=list(color_dict.keys())
+            )
         plt: plotnine.ggplot = (
                 plotnine.ggplot(
                     pos_df,
-                    plotnine.aes(x=axes_str[0], y=axes_str[1], color="primary")
+                    plotnine.aes(**aes_dict)
                 ) +
-                plotnine.geom_point(size=0.2) +
-                plotnine.scale_color_manual(values=list(color_dict.values()),
-                                            limits=list(color_dict.keys()),
-                                            name="Primary Signature")
+                plotnine.geom_point(**(DEF_PCOA_POINT_AES | point_aes)) +
+                plotnine.xlab(
+                    f'{axes_str[0]} ('
+                    f'{pcoa_res.proportion_explained[axes[0]]:.2%})'
+                ) +
+                plotnine.ylab(
+                    f'{axes_str[1]} ('
+                    f'{pcoa_res.proportion_explained[axes[1]]:.2%})')
         )
+        plt = Decomposition.__set_guide_name(
+            plt, guide="color", option=color, compare_to="signature",
+            lbl_if_match="Primary Signature"
+        )
+        if shape is not None:
+            plt = Decomposition.__set_guide_name(
+                plt, guide="shape", option=shape, compare_to="signature",
+                lbl_if_match="Primary Signature"
+            )
+        if color_scale is not None:
+            plt = plt + color_scale
         return plt
 
     def plot_feature_weight(
@@ -2551,6 +2837,251 @@ class Decomposition:
                 plotnine.scale_fill_manual(values=self.colors)
         )
         return plt
+
+    def __univariate_single_signature(
+            self,
+            signature: pd.Series,
+            metadata: pd.Series,
+            test: str,
+            **kwargs
+    ) -> pd.Series:
+        """Perform univariate tests on signature weights against metadata.
+
+        :param signature: Signature weights
+        :param metadata: Metadata values (discrete)
+        :param test: 'mw' for mann-whitney, anything else for kruskal-wallis
+        :param kwargs: passed to test functions
+        :return: Series with statistic, p, test, signature, md
+        """
+        # Split signature values to separate arrays
+        sig_arrs: List[np.ndarray] = [
+            signature.loc[metadata[metadata == x].index] for x in
+            metadata.unique()
+        ]
+        fields: List
+        if test == "mw":
+            # Mann-Whitney U test
+            if len(sig_arrs) != 2:
+                raise ValueError("Mann-Whitney requires exactly 2 categories")
+
+            from scipy.stats import mannwhitneyu
+            res = mannwhitneyu(*sig_arrs, **kwargs)
+            fields = [res.statistic, res.pvalue, 'mannwhitneyu', signature.name,
+                      metadata.name]
+        else:
+            # Default to KW test
+            from scipy.stats import kruskal
+            res = kruskal(*sig_arrs, **kwargs)
+            fields = [res[0], res[1], 'kruskal', signature.name,
+                      metadata.name]
+        return pd.Series(data=fields,
+                         index=['statistic', 'p', 'test', 'signature', 'md'])
+
+    def __univariate_single_category(
+            self,
+            metadata: pd.Series,
+            drop_na: bool,
+            adj_method: str,
+            alpha: float
+    ) -> pd.DataFrame:
+        """Univariate tests for all signatures against a single set of metadata.
+
+        :param metadata: Metadata, discrete
+        :param drop_na: Remove any NA values from metadata and signature
+            before performing tests
+        :param adj_method: Multiple test adjustment method, any supported by
+            statsmodels
+        :param alpha: Threshold
+        :return: Dataframe with results for each signature
+        """
+        # Return from this should be table with signature, md_name, p, adj_p,
+        # direction, test_stat, test_used
+        md_clean: pd.Series = metadata.dropna() if drop_na else metadata
+        categories: int = len(md_clean.unique())
+        test: str = "kw" if categories > 2 else "mw"
+        res = self.scaled("h").apply(self.__univariate_single_signature,
+                                     metadata=md_clean, test=test, axis=1)
+        from statsmodels.stats.multitest import multipletests
+        reject, adj_p, _, _ = multipletests(
+            res['p'],
+            alpha=alpha,
+            method=adj_method,
+            is_sorted=False,
+        )
+        res['alpha'] = alpha
+        res['local_reject'] = reject
+        res['local_adj_p'] = adj_p
+        return res
+
+    def univariate_tests(
+            self,
+            metadata: pd.DataFrame,
+            drop_na: bool = True,
+            adj_method: str = "fdr_bh",
+            alpha: float = 0.05
+    ) -> pd.DataFrame:
+        """Test if signature relative weights vary between categories
+
+        Test whether model weights are different between groups using
+        non-parametric univariate tests. Currently uses the Mann-Whitney
+        U-test on two sample cases, and Kruskall-Wallis tests on multiple
+        category tests.
+
+        :param metadata: Dataframe of metadata variables to test against. Can
+            only handle discrete values.
+        :param drop_na: Remove any samples with NA values for metadata before
+            testing. This is done on a per test basis, so one NA will not cause
+            a sample to be removed for all tests.
+        :param adj_method: Method to adjust for multiple tests. This is applied
+            both locally (for each metadata category), and globally (
+            considering all tests). Accepts any method supported by
+            statsmodels multipletests.
+        :param alpha: Threshold value to reject H0
+        :return: Dataframe with results for each signature and each metadata
+            variable.
+        """
+
+        res = pd.concat(
+            [self.__univariate_single_category(
+                metadata[x], drop_na=drop_na, adj_method=adj_method,
+                alpha=alpha
+            ) for x in metadata.columns]
+        )
+        from statsmodels.stats.multitest import multipletests
+        reject, adj_p, _, _ = multipletests(
+            res['p'],
+            alpha=alpha,
+            method=adj_method,
+            is_sorted=False,
+        )
+        res['global_reject'] = reject
+        res['global_adj_p'] = adj_p
+        res['adj_method'] = adj_method
+        return res
+
+    def __extract_convert_metadata(
+            self,
+            md: pd.DataFrame,
+            selector: Callable[[pd.Series], bool],
+            scale_h: bool = True
+    ) -> pd.DataFrame:
+        """Extract metadata of certain types, join to signatures, stack."""
+        selected: pd.Series = md.apply(selector)
+        md_subset: pd.DataFrame = md.loc[:, selected[selected].index]
+        h: pd.DataFrame = self.h.T if not scale_h else self.scaled("h").T
+        md_subset = (
+            md_subset
+            .stack()
+            .reset_index()
+            .set_axis(['sample', 'metadata_field', 'metadata_value'], axis=1)
+        ).merge(
+            h.stack().reset_index().set_axis(
+                ['sample', 'signature', 'signature_weight'], axis=1
+            ),
+            right_on="sample",
+            left_on="sample"
+        )
+        return md_subset
+
+    def plot_metadata(
+            self,
+            metadata: pd.DataFrame,
+            continuous_fn: Optional[Callable[[pd.Series], bool]] = None,
+            discrete_fn: Optional[Callable[[pd.Series], bool]] = None,
+            boxplot_params: Optional[Dict] = None,
+            point_params: Optional[Dict] = None,
+            disc_rotate_labels: Optional[float] = None,
+    ) -> Tuple[plotnine.ggplot, plotnine.ggplot]:
+        """Plot relative signature weight against metadata.
+        
+        Produce plots of signature weight against metadata. Produces two plots,
+        one with boxplots for categorical metadata, one with scatter plots for
+        continuous metadata. Will infer which type each column is. To use an
+        integer as categorical, convert it to Categorical type in pandas.
+
+        :param metadata: Dataframe with samples on rows, and metadata on
+            columns.
+        :param continuous_fn: Function to determine if a column is
+            continuous. Defaults to considering any floating type or integer to
+            be continuous. May want to customise if you want to use things such
+            as date time formats.
+        :param discrete_fn: Function to determine if a column is categorial.
+            Defaults to considerings any string, or object type column with
+            a number of unique values < 3/4 its length as categorical.
+        :param boxplot_params: Dictionary of parameters to pass to geom_boxplot.
+            These will be fixed parameters (so color="pink" to set all box
+            outlines to pink).
+        :param point_params: Dictionary of parameters to pass to geom_point.
+            Will be fixed parameters, see above.
+        :param disc_rotate_labels: Angle to rotate x axis labels by for
+            boxplots.
+        :return: A tuple of plotnine ggplot objects, first is boxplots,
+            second is scatter plots.
+        """
+        continuous_fn = (_is_series_continuous if continuous_fn is None
+                         else continuous_fn)
+        discrete_fn = (_is_series_discrete if discrete_fn is None else
+                       discrete_fn)
+        disc_rotate_labels = (
+            90.0 if disc_rotate_labels is None else disc_rotate_labels)
+        point_params = {} if point_params is None else point_params
+        boxplot_params = {} if boxplot_params is None else boxplot_params
+
+        cont: pd.DataFrame = self.__extract_convert_metadata(
+            metadata,
+            selector=continuous_fn
+        )
+        disc: pd.DataFrame = self.__extract_convert_metadata(
+            metadata,
+            selector=discrete_fn
+        )
+        # Calculate number of bars in each metadata col
+        cat_count = disc.groupby('metadata_field').nunique()['metadata_value']
+        disc_spacing: Dict[str, List[int]] = dict(
+            x=cat_count.to_list()
+        )
+
+        disc_plot: plotnine.ggplot = (
+                plotnine.ggplot(
+                    disc,
+                    mapping=plotnine.aes(
+                        x='metadata_value',
+                        y='signature_weight',
+                        fill="signature"
+                    )
+                ) +
+                plotnine.geom_boxplot(**boxplot_params) +
+                plotnine.facet_grid(["signature", "metadata_field"],
+                                    scales="free_x", space=disc_spacing) +
+                plotnine.ylab("Signature Weight") +
+                plotnine.xlab("Metadata Value") +
+                plotnine.guides(fill=plotnine.guide_legend(title="Signature")) +
+                plotnine.theme(
+                    axis_text_x=plotnine.element_text(
+                        rotation=disc_rotate_labels)
+                ) +
+                self.fill_scale
+        )
+        cont_plot: plotnine.ggplot = (
+                plotnine.ggplot(
+                    cont,
+                    mapping=plotnine.aes(
+                        x='metadata_value',
+                        y='signature_weight',
+                        color="signature"
+                    )
+                ) +
+                plotnine.geom_point(**point_params) +
+                plotnine.facet_grid(["signature", "metadata_field"],
+                                    scales="free_x") +
+                plotnine.ylab("Signature Weight") +
+                plotnine.xlab("Metadata Value") +
+                plotnine.guides(
+                    color=plotnine.guide_legend(title="Signature")) +
+                self.color_scale
+        )
+
+        return disc_plot, cont_plot
 
     def save(self,
              out_dir: Union[str, pathlib.Path],
@@ -2635,7 +3166,8 @@ class Decomposition:
             plt_path: pathlib.Path = out_dir / plot_fn
             logging.debug("Write decomposition plot: %s", plt_path)
             try:
-                plt_obj: Union[plotnine.ggplot, matplotlib.figure.Figure, pw.Bricks] = (
+                plt_obj: Union[
+                    plotnine.ggplot, matplotlib.figure.Figure, pw.Bricks] = (
                     getattr(self, plot_fn)()
                 )
 
@@ -3227,3 +3759,41 @@ def _wisconsin_double_standardise(h: pd.DataFrame) -> pd.DataFrame:
     # Sample total standardisation
     std_h: pd.DataFrame = h / h.sum()
     return std_h
+
+
+def _is_series_continuous(series: pd.Series) -> bool:
+    """True if a column is float or int."""
+    try:
+        return (
+                np.issubdtype(series.dtype, np.floating) or
+                np.issubdtype(series.dtype, np.integer)
+        )
+    except TypeError as e:
+        return False
+
+
+def _is_series_discrete(series: pd.Series) -> bool:
+    """True if a column is object type, and type is string, or there are
+    less than 3n/4 distinct values, or is pd.Categorical."""
+    if series.dtype == pd.CategoricalDtype:
+        return True
+    if series.dtype == object:
+        if isinstance(series[0], str):
+            return True
+        unique_vals: Set = set(series)
+        return len(unique_vals) > (0.75 * len(series[~series.isna()]))
+    return False
+
+
+def _set_intersect_and_difference(
+        l: Iterable[Hashable],
+        r: Iterable[Hashable]
+) -> Tuple[Set, Set, Set]:
+    """Return l-r, lnr, r-l."""
+    lset: Set = set(l)
+    rset: Set = set(r)
+    return (
+        lset.difference(rset),
+        lset.intersection(rset),
+        rset.difference(lset)
+    )

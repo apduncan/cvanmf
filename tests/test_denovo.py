@@ -59,6 +59,7 @@ def small_rank_selection(
         progress_bar=False
     )
 
+
 @pytest.fixture
 def small_regu_selection(
         small_overlap_blocks,
@@ -71,6 +72,7 @@ def small_regu_selection(
         seed=4928,
         progress_bar=False
     )
+
 
 @pytest.fixture
 def small_bicv_result(
@@ -120,6 +122,29 @@ def small_decompositions_deterministic(
         progress_bar=False
     )
     return res
+
+
+@pytest.fixture()
+def small_decomposition_metadata_cd(
+        small_decomposition
+) -> pd.DataFrame:
+    """Random metadata with continuous and discrete columns"""
+    rnd_cat: pd.DataFrame = pd.Series(
+        np.random.choice(["A", "B"], size=small_decomposition.h.shape[1]),
+        index=small_decomposition.h.columns
+    ).to_frame(name="rand_cat")
+    rnd_cat['rand_cat_too'] = (
+        small_decomposition
+        .scaled("h")
+        .idxmax().astype("str")
+    )
+    rnd_cat['rand_cat_na'] = rnd_cat['rand_cat_too'].replace("S3", np.nan)
+    rnd_cat['rand_cat_categorical'] = pd.Categorical(
+        rnd_cat['rand_cat_too'],
+        categories=rnd_cat['rand_cat_too'].unique()
+    )
+    rnd_cat['rand_cont'] = np.random.uniform(size=rnd_cat.shape[0])
+    return rnd_cat
 
 
 def is_decomposition_close(a: Decomposition, b: Decomposition) -> bool:
@@ -310,7 +335,6 @@ def test_bicv_split_io(
     assert len(unique_i) == len(shuffles)
 
 
-
 def test_bicv(small_bicv_result: BicvResult):
     """A single iterations of BiCV for a single rank."""
 
@@ -361,7 +385,6 @@ def test_rank_selection(small_rank_selection: Dict[int, List[BicvResult]]):
 
 def test_regu_selection(
         small_regu_selection: Tuple[float, Dict[float, List[BicvResult]]]):
-
     """Test output of a small regularisation selection run. Regularisation
     selection is actually run in a fixture, so result can be shared between
     tests."""
@@ -374,7 +397,6 @@ def test_regu_selection(
     for res in itertools.chain.from_iterable(res.values()):
         assert isinstance(res, BicvResult)
     # No more checks here, test properties of BicvResult elsewhere
-
 
 
 def test_to_series(small_bicv_result: BicvResult):
@@ -452,13 +474,22 @@ def test_plot_relative_weight(
         np.random.choice(["A", "B"], size=small_decomposition.h.shape[1]),
         index=small_decomposition.h.columns
     )
-    plt = small_decomposition.plot_relative_weight(group=rnd_cat,
-                                                   model_fit=True)
+    # Add a sample that is not in the decomposition
+    rnd_cat.loc['dn3259nfn'] = 'C'
+    # Remove one sample that should be there
+    rnd_cat = rnd_cat.drop(index=[rnd_cat.index[0]])
+    plt = small_decomposition.plot_relative_weight(
+        group=rnd_cat,
+        model_fit=True,
+        heights=dict(ribbon=2, bar=2, nonsense=2),
+        sample_label_size=3.0
+    )
     pth = (tmp_path / "test_rank_sel.png")
     plt.savefig(pth)
     # Test that the file exists and isn't empty
     assert pth.exists(), "Plot file not created"
     assert pth.stat().st_size > 0, "Plot file is empty"
+
 
 def test_plot_feature_weight(
         tmp_path: pathlib.Path,
@@ -467,6 +498,28 @@ def test_plot_feature_weight(
     matplotlib.pyplot.switch_backend("Agg")
     plt = small_decomposition.plot_feature_weight(threshold=0.02)
     pth = (tmp_path / "test_feature_weight.png")
+    plt.save(pth)
+    # Test that the file exists and isn't empty
+    assert pth.exists(), "Plot file not created"
+    assert pth.stat().st_size > 0, "Plot file is empty"
+
+
+def test_plot_pcoa(
+        tmp_path: pathlib.Path,
+        small_decomposition
+):
+    matplotlib.pyplot.switch_backend("Agg")
+    rnd_cat: pd.Series = pd.Series(
+        np.random.choice(["A", "B"], size=small_decomposition.h.shape[1]),
+        index=small_decomposition.h.columns
+    )
+    rnd_cat.name = "Random Category"
+    plt = small_decomposition.plot_pcoa(
+        color=rnd_cat,
+        shape="signature",
+        point_aes=dict(size=5, alpha=0.3)
+    )
+    pth = (tmp_path / "test_pcoa.png")
     plt.save(pth)
     # Test that the file exists and isn't empty
     assert pth.exists(), "Plot file not created"
@@ -760,6 +813,7 @@ def test_slicing(small_decomposition):
     with pytest.raises(IndexError):
         slcd = small_decomposition[[0, 4], ["A non existent sample"]]
 
+
 def test_reapply(small_decomposition):
     """Can new data be transformed using the model?"""
     # TODO: Improve this test, only checks it does not crash currently
@@ -775,7 +829,50 @@ def test_reapply(small_decomposition):
                        atol=0.025), \
         "Signature weights not equal for identical data."
 
+
 def test_nmf_parameters(small_overlap_blocks):
     nmf_params: NMFParameters = NMFParameters(small_overlap_blocks, 2)
     log_str: str = nmf_params.log_str
     assert len(log_str) > 0, "Parameter log string should not be empty"
+
+
+def test_univariate_tests(small_decomposition):
+    rnd_cat: pd.DataFrame = pd.Series(
+        np.random.choice(["A", "B"], size=small_decomposition.h.shape[1]),
+        index=small_decomposition.h.columns
+    ).to_frame(name="rand_cat")
+    rnd_cat['rand_cat_too'] = (
+        small_decomposition
+        .scaled("h")
+        .idxmax().astype("str")
+    )
+    rnd_cat['rand_cat_na'] = rnd_cat['rand_cat_too'].replace("S3", np.nan)
+    small_decomposition.univariate_tests(metadata=rnd_cat)
+
+
+def test_plot_metadata(
+        small_decomposition,
+        small_decomposition_metadata_cd,
+        tmp_path: pathlib.Path
+):
+    disc_plt, cont_plt = small_decomposition.plot_metadata(
+        metadata=small_decomposition_metadata_cd
+    )
+    disc_pth = (tmp_path / "test_disc.png")
+    disc_plt.save(disc_pth)
+    # Test that the file exists and isn't empty
+    assert disc_pth.exists(), "Plot file not created"
+    assert disc_pth.stat().st_size > 0, "Plot file is empty"
+    cont_pth = (tmp_path / "test_cont.png")
+    cont_plt.save(cont_pth)
+    # Test that the file exists and isn't empty
+    assert cont_pth.exists(), "Plot file not created"
+    assert cont_pth.stat().st_size > 0, "Plot file is empty"
+
+
+def test_name_signatures_by_weight(
+        small_decomposition
+):
+    small_decomposition.name_signatures_by_weight(
+        max_char_length=20
+    )

@@ -4,9 +4,9 @@ import collections.abc
 import itertools
 import logging
 import math
-import xml.sax
 from collections import Counter, namedtuple
-from typing import Union, Tuple, NamedTuple, Iterable, List, Set, Literal, Any, Optional, Dict, Callable
+from typing import Union, Tuple, Iterable, List, Set, Literal, Optional, Dict, \
+    Callable, Any
 
 import networkx as nx
 import numpy as np
@@ -16,29 +16,12 @@ from scipy.optimize import linear_sum_assignment
 from scipy.stats import kruskal
 from sklearn.metrics.pairwise import cosine_similarity
 
-from cvanmf.denovo import Decomposition, NMFParameters
+from cvanmf.denovo import Decomposition
 from cvanmf.models import Signatures
-from cvanmf.reapply import FeatureMatch, FeatureMapping, match_identical, _reapply_model
+from cvanmf.reapply import match_identical, _reapply_model
 
 # Alias for types which hold signatures that can be compared
 Comparable = Union[Signatures, Decomposition, pd.DataFrame]
-
-
-def _get_signatures(c: Comparable) -> pd.DataFrame:
-    """Get the signature matrix from any of the comparable types."""
-
-    match c:
-        case pd.DataFrame():
-            return c
-        case Decomposition():
-            return c.w
-        case Signatures():
-            return c.w
-        case _:
-            raise TypeError(
-                f"Cannot find signatures in type {type(c)}, please provide"
-                "one of the supported types (Signatures, Decomposition, "
-                "DataFrame")
 
 
 def compare_signatures(a: Comparable,
@@ -99,7 +82,7 @@ def align_signatures(
     else:
         sigs = args
 
-    sig_mats: Iterable[pd.DataFrame] = (_get_signatures(x) for x in sigs)
+    sig_mats: Iterable[pd.DataFrame] = (get_signatures_from_comparable(x) for x in sigs)
     index_union: List[str] = list(set(
         itertools.chain.from_iterable(
             (x.index for x in sig_mats)
@@ -107,7 +90,7 @@ def align_signatures(
     ))
     aligned_mats: List[pd.DataFrame] = [
         x.reindex(index_union, fill_value=0) for x in
-        (_get_signatures(x) for x in sigs)
+        (get_signatures_from_comparable(x) for x in sigs)
     ]
     return aligned_mats
 
@@ -136,7 +119,7 @@ def match_signatures(a: Comparable, b: Comparable) -> pd.DataFrame:
     :param b: Signature matrix, or object with signature matrix
     :returns: DataFrame with pairing and scores"""
 
-    mat_a, mat_b = _get_signatures(a), _get_signatures(b)
+    mat_a, mat_b = get_signatures_from_comparable(a), get_signatures_from_comparable(b)
     # Swap so a is always the comparable with more signatures
     mat_a, mat_b, order = (mat_b, mat_a, ['b', 'a']) \
         if mat_b.shape[1] > mat_a.shape[1] \
@@ -342,7 +325,7 @@ class Signature(pd.Series):
     @staticmethod
     def from_comparable(c: Comparable) -> List[Signature]:
         return [Signature(data=col) for _, col
-                in _get_signatures(c).T.iterrows()]
+                in get_signatures_from_comparable(c).T.iterrows()]
 
     @staticmethod
     def mds(signatures: Union[Iterable[Signature], pd.DataFrame],
@@ -435,6 +418,14 @@ class Model:
         self.signatures += list(signatures)
         return self
 
+    @staticmethod
+    def from_comparable(comparable: Comparable) -> Model:
+        sigs: List[Signature] = Signature.from_comparable(comparable)
+        model: Model = Model()
+        model.add_signatures(sigs)
+        return model
+
+
     def __repr__(self) -> str:
         return (f'Model[nsigs={len(self.signatures)}, '
                 f'cohort='
@@ -479,6 +470,18 @@ class Cohort:
     def signatures(self) -> List[Signature]:
         return list(itertools.chain.from_iterable(
             x.signatures for x in self.models))
+
+    @staticmethod
+    def from_comparables(
+            comparables: Iterable[Comparable],
+            name: str = "",
+            x: Optional[pd.DataFrame] = None
+    ) -> Cohort:
+        models: List[Model] = [Model.from_comparable(x) for x in comparables]
+        cohort: Cohort = Cohort(name=name, models=models, x=x)
+        for m in cohort.models:
+            m.cohort = cohort
+        return cohort
 
     def add_models(self, models: Iterable[Model]) -> Cohort:
         for m in models:
@@ -1258,7 +1261,11 @@ class Combiner:
             )
         return plt
 
-    def plot_mds(self, **kwargs) -> plotnine.ggplot:
+    def plot_mds(
+            self,
+            hull: bool = True,
+            **kwargs
+    ) -> plotnine.ggplot:
         """Plot all clusters member signatures in reduced dimensions."""
 
         sig_list: List[Signature] = list(itertools.chain.from_iterable(
@@ -1282,14 +1289,13 @@ class Combiner:
         # Label if is a mean signature
         df['is_mean'] = (
                 np.array(range(df.shape[0])) < (df.shape[0] - num_centroids))
-        return (
+        plt: plotnine.ggplot = (
                 plotnine.ggplot(
                     df,
                     plotnine.aes(x="dim_1", y="dim_2", color="cohort",
                                  shape="factor(model_rank)")) +
                 plotnine.geom_point(size=0.5) +
-                plotnine.stat_hull(plotnine.aes(group="cluster"),
-                                   color="black") +
+
                 plotnine.geom_text(
                     plotnine.aes(label="cluster"),
                     data=df[~df['is_mean']],
@@ -1297,6 +1303,10 @@ class Combiner:
                     color="black"
                 )
         )
+        if hull:
+            plt = plt + plotnine.stat_hull(
+                plotnine.aes(group="cluster"), color="black")
+        return plt
 
     def label_by_match(self,
                        external_model: Comparable) -> pd.DataFrame:
@@ -1412,3 +1422,36 @@ def example_cohort_structure() -> Dict[str, pd.DataFrame]:
     c6 = CohortTuple("Merge_Prev_Bact", c6_w, c6_h, c6_x / c6_x.sum())
 
     return {x.name: x for x in [c1, c2, c3, c4, c5, c6]}
+
+
+def split_dataframe_to_cohorts(
+        x: pd.DataFrame,
+        cohort_labels: pd.Series,
+        min_size: int = 0
+) -> Dict[Any, pd.DataFrame]:
+    """Split a DataFrame into multiple, based on the provided cohort labels."""
+
+    cohort_count: pd.Series = cohort_labels.groupby(cohort_labels).count()
+    cohort_include: pd.Series = cohort_count.loc[cohort_count >= min_size]
+    labels: pd.Series = cohort_labels.loc[
+        cohort_labels.isin(cohort_include.index)]
+    return {
+        lbl: x.loc[:, cohort_labels.loc[cohort_labels == lbl].index]
+        for lbl in cohort_include.index
+    }
+
+def get_signatures_from_comparable(c: Comparable) -> pd.DataFrame:
+    """Get the signature matrix from any of the comparable types."""
+
+    match c:
+        case pd.DataFrame():
+            return c
+        case Decomposition():
+            return c.w
+        case Signatures():
+            return c.w
+        case _:
+            raise TypeError(
+                f"Cannot find signatures in type {type(c)}, please provide"
+                "one of the supported types (Signatures, Decomposition, "
+                "DataFrame")
