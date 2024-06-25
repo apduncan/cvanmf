@@ -371,7 +371,7 @@ def validate_genus_table(abd_tbl: pd.DataFrame,
     bad_taxa: List = list(filter(_is_taxon_unknown, abd_tbl.index))
     abd_tbl = abd_tbl.drop(labels=bad_taxa)
     if len(bad_taxa) > 0:
-        logging.warning(f"Removed {len(bad_taxa)} unknown taxa: {bad_taxa}")
+        logging.info(f"Removed {len(bad_taxa)} unknown taxa: {bad_taxa}")
 
     # Remove any taxa which had 0 observations, and samples for which 0
     # taxa were observed (unlikely but check)
@@ -380,11 +380,11 @@ def validate_genus_table(abd_tbl: pd.DataFrame,
         abd_tbl.loc[:, abd_tbl.sum(axis=0) == 0].columns)
     if len(zero_taxa) > 0:
         abd_tbl = abd_tbl.drop(labels=zero_taxa)
-        logging.warning(
+        logging.info(
             f"Dropped {len(zero_taxa)} taxa with no observations: {zero_taxa}")
     if len(zero_samples) > 0:
         abd_tbl = abd_tbl.drop(columns=zero_samples)
-        logging.warning(
+        logging.info(
             f"Dropped {len(zero_samples)} sample with no observations")
 
     # Renormalise (TSS)

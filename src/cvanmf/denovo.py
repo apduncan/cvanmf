@@ -3230,6 +3230,9 @@ class Decomposition:
                 break
             plt_path: pathlib.Path = out_dir / plot_fn
             logging.debug("Write decomposition plot: %s", plt_path)
+            if plot_fn == "plot_metadata":
+                # Requires a metadata object, so skip
+                continue
             try:
                 plt_obj: Union[
                     plotnine.ggplot, matplotlib.figure.Figure, pw.Bricks] = (
