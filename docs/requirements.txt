@@ -3,4 +3,4 @@ sphinx-autoapi
 sphinx-rtd-theme
 sphinx-click
 seaborn
-package-two @ git+https://github.com/apduncan/cvanmf.git@main
+cvanmf @ git+https://github.com/apduncan/cvanmf.git@main
