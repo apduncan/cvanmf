@@ -804,7 +804,8 @@ def plot_rank_selection(results: Dict[Union[int, float], List[BicvResult]],
                         jitter_size: float = 0.3,
                         n_col: int = None,
                         xaxis: str = "rank",
-                        rotate_x_labels: Optional[float] = None
+                        rotate_x_labels: Optional[float] = None,
+                        geom_params: Dict[str, Any] = None
                         ) -> plotnine.ggplot:
     """Plot rank selection results from bi-cross validation.
 
@@ -875,6 +876,8 @@ def plot_rank_selection(results: Dict[Union[int, float], List[BicvResult]],
         ordered=True,
         categories=facet_order
     )
+    # Parameters for selected geom
+    geom_params = {} if geom_params is None else geom_params
 
     # Plot
     plot: plotnine.ggplot = (
@@ -887,7 +890,8 @@ def plot_rank_selection(results: Dict[Union[int, float], List[BicvResult]],
             )
             + plotnine.facet_wrap(facets="measure", scales="free_y",
                                   ncol=n_col)
-            + requested_geom(mapping=plotnine.aes(fill="measure"))
+            + requested_geom(mapping=plotnine.aes(fill="measure"),
+                             **geom_params)
             + plotnine.xlab(xaxis)
             + plotnine.ylab("Value")
             + plotnine.scale_fill_discrete(guide=False)
@@ -2160,6 +2164,21 @@ class Decomposition:
         scaled: pd.DataFrame = matrix / matrix.sum()
         return scaled.T if transpose else scaled
 
+    def discrete_signature_scale(
+            self,
+            axis: Literal['x', 'y'],
+    ) -> Union[plotnine.scale_x_discrete, plotnine.scale_y_discrete]:
+        """Make a plotnine scale which puts the signatures in order.
+
+        By default, plotnine will alphabetically sort (S1, S11 .. S2, S21),
+        this produces a scale object which can be added to a plot to put the
+        signatures in their order in this object.
+        """
+        scale = (plotnine.scale_x_discrete if
+                 axis == "x" else
+                 plotnine.scale_y_discrete)
+        return scale(limits=list(self.names))
+
     def compare_signatures(self, b: 'Comparable') -> pd.DataFrame:
         """Similarity between these signatures and one other set.
 
@@ -2366,6 +2385,8 @@ class Decomposition:
             heights: Union[Dict[str, float], Iterable[float]] = None,
             width: float = 6.0,
             sample_label_size: float = 5.0,
+            legend_cols_h: int = 8,
+            legend_cols_v: int = 1,
             **kwargs
     ) -> Union[plotnine.ggplot, pw.Bricks]:
         """Plot relative weight of each signature in each sample.
@@ -2451,11 +2472,12 @@ class Decomposition:
                 ) +
                 plotnine.xlab("Sample") +
                 plotnine.ylab("Relative Weight") +
-                plotnine.scale_fill_manual(self.colors,
-                                           name="Signature") +
+                self.fill_scale +
                 plotnine.theme(axis_text_x=plotnine.element_text(angle=90),
                                legend_position="right",
                                legend_title_align="center") +
+                plotnine.guides(fill=plotnine.guide_legend(
+                    ncol=legend_cols_v, order=2)) +
                 ordered_scale
         )
         # There are two optional components to this plot, a point indicating
@@ -2541,8 +2563,13 @@ class Decomposition:
                     plotnine.theme(axis_text_x=plotnine.element_text(angle=90),
                                    axis_text_y=plotnine.element_blank(),
                                    axis_ticks_minor_x=plotnine.element_blank(),
-                                   axis_ticks_minor_y=plotnine.element_blank()
-                                   )
+                                   axis_ticks_minor_y=plotnine.element_blank(),
+                                   legend_position="bottom"
+                                   ) +
+                    plotnine.guides(
+                        fill=plotnine.guide_legend(ncol=legend_cols_h,
+                                                   order=1)
+                    )
             )
         if model_fit:
             plt_mfp = self.plot_modelfit_point(**kwargs)
@@ -2626,7 +2653,7 @@ class Decomposition:
         """
 
         from skbio import DistanceMatrix
-        from skbio.stats.ordination import pcoa
+        from skbio.stats.ordination import pcoa, pcoa_biplot
 
         mat: pd.DataFrame = self.__get_pcoa_matrix(on)
         # If the Decomposition has been sliced, some feature in X or WH
@@ -2644,6 +2671,7 @@ class Decomposition:
         )
 
         pcoa_res: OrdinationResults = pcoa(dist_mat)
+        pcoa_res = pcoa_biplot(pcoa_res, std_mat.T)
 
         return pcoa_res
 
@@ -2710,6 +2738,7 @@ class Decomposition:
             axes: Tuple[int, int] = (0, 1),
             color: Union[pd.Series, Literal['signature']] = "signature",
             shape: Optional[Union[pd.Series, Literal['signature']]] = None,
+            signature_arrows: bool = False,
             point_aes: Dict[str, Any] = None,
             **kwargs
     ) -> plotnine.ggplot:
@@ -2724,6 +2753,7 @@ class Decomposition:
             color based on the primary signature
         :param shape:  Metadata to used to decide shape of points,
             or 'signature' to base shape on the primary signature
+        :param signature_arrows: Plot location of signatures as arrows
         :param point_aes: Dictionary of arguments to pass to geom_point
         :param kwargs: arguments to pass to :method:`pcoa`
         :return: Scatter plot of samples
@@ -2737,11 +2767,22 @@ class Decomposition:
         pos_df['primary'] = self.primary_signature
         axes_str: Tuple[str, str] = tuple(f'PC{i + 1}' for i in axes)
 
+        feat_df: pd.DataFrame = pcoa_res.features
+        feat_df['signature'] = feat_df.index
+
         # Color and shape
         aes_dict: Dict[str, str] = dict(
             x=axes_str[0],
             y=axes_str[1],
             color="color"
+        )
+        aes_segment: Dict[str, str] = dict(
+            xend=axes_str[0],
+            yend=axes_str[1]
+        )
+        aes_label: Dict[str, str] = dict(
+            x=axes_str[0],
+            y=axes_str[1]
         )
         pos_df['color'] = (
             pos_df['primary'] if Decomposition.__compare_str_series(
@@ -2757,16 +2798,7 @@ class Decomposition:
         # If using primary signatures for colour, use object default colours
         color_scale: Optional[plotnine.scale_color_manual] = None
         if Decomposition.__compare_str_series(color, "signature"):
-            contained_sigs: List[str] = list(set(self.primary_signature))
-            color_dict: Dict[str, str] = {n: c for n, c in
-                                          dict(zip(self.names,
-                                                   self.colors)).items()
-                                          if n in contained_sigs
-                                          }
-            color_scale = plotnine.scale_color_manual(
-                values=list(color_dict.values()),
-                limits=list(color_dict.keys())
-            )
+            color_scale = self.color_scale
         plt: plotnine.ggplot = (
                 plotnine.ggplot(
                     pos_df,
@@ -2792,6 +2824,28 @@ class Decomposition:
             )
         if color_scale is not None:
             plt = plt + color_scale
+        if signature_arrows:
+            plt = (
+                    plt +
+                    plotnine.geom_segment(
+                        feat_df,
+                        plotnine.aes(**aes_segment),
+                        inherit_aes=False,
+                        x=0, y=0,
+                        arrow=plotnine.arrow(length=0.05),
+                        size=0.4,
+                        linetype="solid",
+                        show_legend=False,
+                        color='black'
+                    ) +
+                    plotnine.geom_text(
+                        feat_df,
+                        plotnine.aes(**(aes_label | dict(label="signature"))),
+                        inherit_aes=False,
+                        color='black',
+                        show_legend=False
+                    )
+            )
         return plt
 
     def plot_feature_weight(
@@ -2834,7 +2888,8 @@ class Decomposition:
                 plotnine.labs(x="Signature", y="Feature", fill="Signature",
                               size="Relative Weight") +
                 plotnine.guides(fill=False, size=False) +
-                plotnine.scale_fill_manual(values=self.colors)
+                self.fill_scale +
+                self.discrete_signature_scale(axis='x')
         )
         return plt
 
@@ -2981,6 +3036,12 @@ class Decomposition:
             right_on="sample",
             left_on="sample"
         )
+        # Order the signatures so they facet correctly
+        md_subset['signature'] = pd.Categorical(
+            md_subset['signature'],
+            ordered=True,
+            categories=self.names
+        )
         return md_subset
 
     def plot_metadata(
@@ -3026,13 +3087,17 @@ class Decomposition:
             90.0 if disc_rotate_labels is None else disc_rotate_labels)
         point_params = {} if point_params is None else point_params
         boxplot_params = {} if boxplot_params is None else boxplot_params
-
+        # Convert
+        md: pd.DataFrame = (
+            metadata.to_frame() if isinstance(metadata, pd.Series) else
+            metadata
+        )
         cont: pd.DataFrame = self.__extract_convert_metadata(
-            metadata,
+            md,
             selector=continuous_fn
         )
         disc: pd.DataFrame = self.__extract_convert_metadata(
-            metadata,
+            md,
             selector=discrete_fn
         )
         # Calculate number of bars in each metadata col

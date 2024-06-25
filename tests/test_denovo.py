@@ -28,7 +28,8 @@ def pyplot_backend():
 def small_overlap_blocks(scope="session") -> pd.DataFrame:
     """Small overlapping block diagonal matrix with k=4, for use in testing
     de-novo methods."""
-    return models.synthetic_data(100, 100, 0.25, 3)
+    return models.synthetic_data(100, 100, 0.25, 3,
+                                 scale_lognormal_params=True)
 
 
 @pytest.fixture
@@ -482,7 +483,9 @@ def test_plot_relative_weight(
         group=rnd_cat,
         model_fit=True,
         heights=dict(ribbon=2, bar=2, nonsense=2),
-        sample_label_size=3.0
+        sample_label_size=3.0,
+        legend_cols_h=2,
+        legend_cols_v=2
     )
     pth = (tmp_path / "test_rank_sel.png")
     plt.savefig(pth)
@@ -517,7 +520,8 @@ def test_plot_pcoa(
     plt = small_decomposition.plot_pcoa(
         color=rnd_cat,
         shape="signature",
-        point_aes=dict(size=5, alpha=0.3)
+        point_aes=dict(size=5, alpha=0.3),
+        signature_arrows=True
     )
     pth = (tmp_path / "test_pcoa.png")
     plt.save(pth)

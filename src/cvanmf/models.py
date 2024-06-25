@@ -109,7 +109,10 @@ def example_abundance() -> pd.DataFrame:
 def synthetic_data(m: int = 100,
                    n: int = 100,
                    overlap: float = 0.25,
-                   k: int = 3) -> pd.DataFrame:
+                   k: int = 3,
+                   normal_noise_params: Optional[Dict] = None,
+                   scale_lognormal_params: Optional[Dict] = None
+) -> pd.DataFrame:
     """Create some simple synthetic data.
 
     Create an m x n matrix with blocks along the diagonal which overlap to an extent
@@ -119,10 +122,28 @@ def synthetic_data(m: int = 100,
     :param n: Number of columns in matrix
     :param overlap: Proportion of block length to participate in overlap
     :param k: Number of signatures
+    :param normal_noise_params: Parameters to pass to numpy.random.normal
+        to apply noise to entries. Leave as none to use default parameters.
+    :param scale_lognormal_params: Parameters to pass to numpy.random.lognormal
+        to scale each feature (give some features higher values than others).
+        If set to true, will use default parameters for distribution. Leave as
+        None to skip feature scaling.
     """
 
     # Matrix dimensions
     i, j = m, n
+
+    # Noise parameters
+    do_scale: bool = scale_lognormal_params is not None
+    scale_lognormal_params: Dict = (
+        dict() if scale_lognormal_params is None or
+        not isinstance(scale_lognormal_params, dict)
+        else scale_lognormal_params
+    )
+    normal_noise_params = (
+        dict() if scale_lognormal_params is None
+             else scale_lognormal_params
+    )
 
     # Width of blocks without overlap
     base_h, tail_h = divmod(i, k)
@@ -148,8 +169,18 @@ def synthetic_data(m: int = 100,
     # Apply noise from normal distribution
     block_mat = block_mat + np.absolute(
         np.random.normal(loc=0.0, scale=0.1, size=(i, j)))
+    # Scale features
+    if do_scale:
+        fscale: np.ndarray = np.random.lognormal(
+            **scale_lognormal_params,
+            size=m
+        )
+        block_mat = fscale.reshape(-1, 1) * block_mat
     # Convert to DataFrame and add some proper naming for rows/cols
-    return pd.DataFrame(
+    df: pd.DataFrame = pd.DataFrame(
         block_mat,
         index=[f'feat_{i_lab}' for i_lab in range(i)],
         columns=[f'samp_{j_lab}' for j_lab in range(j)])
+    # TSS scale
+    df = df / df.sum()
+    return df
