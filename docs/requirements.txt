@@ -3,3 +3,4 @@ sphinx-autoapi
 sphinx-rtd-theme
 sphinx-click
 seaborn
+cvanmf
