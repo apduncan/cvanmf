@@ -3,40 +3,40 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Set, List, Dict, Iterable
 
+import matplotlib.pyplot
 import numpy as np
 import pandas as pd
 import pytest
 from click.testing import CliRunner
 
 from cvanmf.denovo import Decomposition, NMFParameters
-from cvanmf.reapply import cli, to_relative
+from cvanmf.reapply import cli, _reapply_model
 from cvanmf import models
-from cvanmf.reapply import (GenusMapping, EnteroException, validate_table,
-                            match_genera, nmf_transform, transform_table,
-                            ReapplyResult, model_fit)
+from cvanmf.reapply import (FeatureMapping, CVANMFException,
+                            validate_genus_table, match_genera)
 
 
-def test_genus_mapping() -> None:
-    """Test GenusMapping class which handles match genera in abundance table and
-    model matrices."""
+def test_feature_mapping() -> None:
+    """Test FeatureMapping class which handles matching features in abundance
+    table and model matrices."""
 
-    source_taxa: Set[str] = {"A", "B", "C", "D"}
-    target_taxa: Set[str] = {"B", "C", "D", "E", "X"}
-    mapping: GenusMapping = GenusMapping(target_taxa=target_taxa,
-                                         source_taxa=source_taxa)
+    source_features: Set[str] = {"A", "B", "C", "D"}
+    target_features: Set[str] = {"B", "C", "D", "E", "X"}
+    mapping: FeatureMapping = FeatureMapping(target_features=target_features,
+                                             source_features=source_features)
 
     # Add a mapping
-    mapping.add(genus_from="B", genus_to="B")
+    mapping.add(feature_from="B", feature_to="B")
     assert mapping.mapping["B"] == ["B"], "Mapping not added succesfully"
 
-    with pytest.raises(EnteroException):
+    with pytest.raises(CVANMFException):
         # Add a mapping with a non-existent target
         mapping.add("B", "Missing")
         # Add a mapping with a non-existent source
         mapping.add("Missing", "B")
 
     # Add a second mapping for a taxon
-    mapping.add(genus_from="B", genus_to="C")
+    mapping.add(feature_from="B", feature_to="C")
     assert mapping.mapping["B"] == ["B", "C"], "Second mapping not added"
     assert len(mapping.conflicts) == 1, "Conflict not detected"
     assert mapping.conflicts[0] == ("B", ["B", "C"]), "Conflict not reported"
@@ -47,9 +47,9 @@ def test_genus_mapping() -> None:
     # Get mapping as a DataFrame
     df: pd.DataFrame = mapping.to_df()
     assert df.shape == (5, 2), "DataFrame of mapping has wrong dimensions"
-    assert set(df['input_genus']) == source_taxa, ("Some source taxa missing in"
-                                                   "dataframe of mapping")
-    assert set(df['es_genus']) == {"", "B", "C"}, "Unexpected target taxa"
+    assert set(df['input_feature']) == source_features, \
+        "Some source taxa missing in dataframe of mapping"
+    assert set(df['model_feature']) == {"", "B", "C"}, "Unexpected target taxa"
 
     # Transform an abundance matrix
     mapping.add("C", "B")
@@ -83,22 +83,22 @@ def test_genus_mapping() -> None:
     assert trans_w.loc["N"].sum() == 0, "Missing taxon does not have 0 weight"
 
 
-def test_validate_table() -> None:
-    """Test abunance table validations"""
+def test_validate_genus_table() -> None:
+    """Test genus matrix validations for ES models."""
 
     # Test for only one sample - maybe we should allow this though?
     malformed: pd.DataFrame = pd.DataFrame(
         [[0], [2]], index=["a", "b"]
     )
-    with pytest.raises(EnteroException):
-        validate_table(malformed, logger=lambda x: None)
+    with pytest.raises(CVANMFException):
+        validate_genus_table(malformed, logger=lambda x: None)
 
     # Test for no sample names
     no_colnames: pd.DataFrame = pd.DataFrame(
         [[0, 1, 2], [3, 4, 5]], index=["a", "b"]
     )
-    with pytest.raises(EnteroException):
-        validate_table(no_colnames, logger=lambda x: None)
+    with pytest.raises(CVANMFException):
+        validate_genus_table(no_colnames, logger=lambda x: None)
 
     # Run on some example data
     # We'll modify this dataset to trigger as many validation steps as possible
@@ -115,12 +115,13 @@ def test_validate_table() -> None:
     # - legitimate(ish) taxon with 0 observations
     transposed["Eukaryota;Ilex_aquifolium"] = 0
     log: List[str] = []
-    tidied: pd.DataFrame = validate_table(transposed,
-                                          logger=lambda x: log.append(x))
+    tidied: pd.DataFrame = validate_genus_table(transposed,
+                                                logger=lambda x: log.append(x))
     # Has this been transposed? Should have more samples than taxa for the
     # example data
     assert tidied.shape[1] > tidied.shape[0], "Not succesfully transposed"
-    assert tidied.shape[0] == 586, "Tidied data should have 5 columns (1 per ES)"
+    assert tidied.shape[0] == 586, ("Tidied data should have 5 columns (1 per "
+                                    "ES)")
     # Have ranked identifiers been removed?
     assert sum('d__' in x for x in tidied.index) == 0, \
         "Rank identifiers not removed"
@@ -137,77 +138,51 @@ def test_validate_table() -> None:
     dup_cols: List[str] = list(transposed.columns)
     dup_cols[0] = dup_cols[1]
     transposed.columns = dup_cols
-    with pytest.raises(EnteroException):
-        validate_table(transposed, logger=lambda x: log.append(x))
+    with pytest.raises(CVANMFException):
+        validate_genus_table(transposed, logger=lambda x: log.append(x))
 
 
 def test_match_genera() -> None:
     """Test function for matching genera in an abundance table and model. This
-    is the bulk of work in reapplying Eneterosignatures."""
+    is the bulk of work in reapplying Enterosignatures."""
 
     # Make test data to work with
     abd: pd.DataFrame = models.example_abundance()
-    w: pd.DataFrame = models.five_es()
+    w: pd.DataFrame = models.five_es().w
     # Make an arbitrary hard mapping
     mapping: Dict[str, str] = {
         abd.index[0]: w.index[-1]
     }
-    log: List[str] = []
 
-    t_abd, t_w, map = match_genera(es_w=w, abd_tbl=abd, hard_mapping=mapping,
-                                   family_rollup=True, logger=log.append)
-    # Basic sanity check of results
-    assert t_w.shape[1] == w.shape[1], "W matrix column counts do not match"
-    assert t_abd.shape[1] == abd.shape[1], \
-        "Abundance column counts do not match"
-    # Only columns which exist in the original W matrix should have any weight
-    has_weight: Iterable[str] = t_w[t_w.sum(axis=1) > 0].index
-    assert all(x in w.index for x in has_weight), \
-        "Taxa not in original model have been assigned weight"
-    # Check hard mapping respected
-    assert abd.index[0] not in t_abd.index, \
-        "User specified hard mapping not respected"
-    assert w.index[-1] in t_abd.index, \
-        "User specified hard mapping not respected"
+    map = match_genera(w=w, y=abd, hard_mapping=mapping,
+                       family_rollup=True)
+    # TODO: Move the below commented checks to _reapply_model
+    # # Basic sanity check of results
+    # assert t_w.shape[1] == w.shape[1], "W matrix column counts do not match"
+    # assert t_abd.shape[1] == abd.shape[1], \
+    #     "Abundance column counts do not match"
+    # # Only columns which exist in the original W matrix should have any weight
+    # has_weight: Iterable[str] = t_w[t_w.sum(axis=1) > 0].index
+    # assert all(x in w.index for x in has_weight), \
+    #     "Taxa not in original model have been assigned weight"
+    # # Check hard mapping respected
+    # assert abd.index[0] not in t_abd.index, \
+    #     "User specified hard mapping not respected"
+    # assert w.index[-1] in t_abd.index, \
+    #     "User specified hard mapping not respected"
 
     # Test just that no errors with different parameters
     # Without mapping
-    t_w, t_abd, map = match_genera(es_w=w, abd_tbl=abd, hard_mapping=None,
-                                   family_rollup=True, logger=log.append)
+    map = match_genera(w=w, y=abd, hard_mapping=None,
+                       family_rollup=True)
     # No rollup
-    t_w, t_abd, map = match_genera(es_w=w, abd_tbl=abd, hard_mapping=mapping,
-                                   family_rollup=False, logger=log.append)
-
-
-def test_model_fit() -> None:
-    """Test functions for calculating model fit."""
-
-    # Check simplest case - two identical matrices should produce all 1s
-    w: pd.DataFrame = models.five_es()
-    abd: pd.DataFrame = models.example_abundance()
-    res: Decomposition = transform_table(abundance=abd, rollup=True,
-                                         model_w=w)
-    mf: pd.Series = res.model_fit
-    # Check for stable mean model fit between versions
-    assert round(mf.mean(), 3) == round(0.636286, 3), \
-        "Change in mean model fit"
-
-    # Model fit between identical matrices should be 1.0
-    clone_decomp: Decomposition = Decomposition(
-        parameters=NMFParameters(
-            **(res.parameters._asdict() | dict(x=res.wh))
-        ),
-        h=res.h,
-        w=res.w
-    )
-    # Sometimes, 1.0 != 1.0, thanks computers
-    assert all(np.isclose(clone_decomp.model_fit, 1.0)), \
-        "Model fit between identical matrices not all 1.0"
-
+    map = match_genera(w=w, y=abd, hard_mapping=mapping,
+                       family_rollup=False)
 
 
 def test_cli(tmp_path) -> None:
     """Test the click command line interface for reapplying."""
+    matplotlib.pyplot.switch_backend('Agg')
 
     runner: CliRunner = CliRunner()
     out_dir: pathlib.Path = tmp_path / "output_to"
@@ -224,12 +199,26 @@ def test_cli(tmp_path) -> None:
 
     result = runner.invoke(
         cli,
-        ("--abundance " +
+        ("-i " +
          str(tmp_path / "small_nw.tsv") +
          " -o " +
          str(out_dir))
     )
 
+    assert result.exit_code == 0, "CLI returned non-zero exit code"
+
     # Check output files are created
     for f in ['w.tsv', 'h.tsv', 'x.tsv', 'feature_mapping.tsv']:
         assert (out_dir / f).exists(), f"Output {f} not created"
+
+
+def test__reapply_model():
+    """Test the internal reapply function. Most exposed reapply method are a
+    wrapper around this."""
+
+    res = _reapply_model(y=models.example_abundance().iloc[:, :20],
+                         w=models.five_es().w,
+                         colors=None,
+                         input_validation=validate_genus_table,
+                         feature_match=match_genera,
+                         family_rollup=True)

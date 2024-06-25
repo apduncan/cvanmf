@@ -6,4 +6,4 @@ etc etc
 from importlib.metadata import version
 __version__ = version("cvanmf")
 
-from cvanmf.reapply import reapply
+# from cvanmf.reapply import reapply

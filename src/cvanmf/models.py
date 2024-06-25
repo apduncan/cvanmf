@@ -2,28 +2,81 @@
 import logging
 import math
 from importlib.resources import files
+from typing import NamedTuple, List, Optional, Callable, Dict, Any, Union
 
 import numpy as np
 import pandas as pd
 
+FIVE_ES_COLORS = {
+    "ES_Bact": "#E69F00",
+    "ES_Firm": "#023e8a",
+    "ES_Prev": "#D55E00",
+    "ES_Bifi": "#009E73",
+    "ES_Esch": "#483838"
+}
 
-def five_es() -> pd.DataFrame:
+
+class Signatures(NamedTuple):
+    """Definition of an existing signature model.
+
+    This provides the definition of existing signatures required to reapply
+    the signature model to new data. Where Decomposition stores the input and
+    H matrix, these are not necessary for transforming new data. Rather, we
+    only need the W matrix, the colors associated with each signature (for
+    consistency of representation), and the preprocessing steps (to match
+    features in the new data with those in the W matrix)."""
+    w: pd.DataFrame
+    """Feature weights (W matrix) for this model."""
+    colors: Union[List[str], Dict[str, str]]
+    """Color for each signature in the model."""
+    feature_match: 'FeatureMatch'
+    """Function to map features in new data to those in the model W matrix."""
+    input_validation: 'InputValidation' = lambda x: x
+    """Function to validate and potentially transform input table. Defaults
+    to identity function"""
+    citation: Optional[str] = None
+    """Citation when using this model."""
+
+    def reapply(self,
+                y: pd.DataFrame,
+                **kwargs) -> 'Decomposition':
+        """Transform new data using this signature model.
+
+        :param y: New data of same type as the existing model.
+        """
+        from cvanmf import reapply
+        return reapply._reapply_model(
+            y=y,
+            **(self._asdict() | kwargs)
+        )
+
+
+def five_es() -> Signatures:
     """The 5 Enterosignature model of Frioux et al.
     (2023, https://doi.org/10.1016/j.chom.2023.05.024). A summary of this model
     can also be found on the website https://enterosignatures.quadram.ac.uk
 
-    :return: W matrix of 5 Enterosignature model
-    :type: pd.DataFrame
+    :return: 5 Enterosignature model
+    :type: Signatures
     """
-    logging.info("If you use this model please cite Frioux et al. "
-                 "(2023, https://doi.org/10.1016/j.chom.2023.05.024)")
 
-    # with resources.path("cvanmf.data", "ES5_W.tsv") as f:
-    return pd.read_csv(
+    w: pd.DataFrame = pd.read_csv(
         str(files("cvanmf.data").joinpath("ES5_W.tsv")),
         sep="\t",
         index_col=0
     )
+    from cvanmf import reapply
+    return Signatures(w=w,
+                      colors=FIVE_ES_COLORS,
+                      feature_match=reapply.match_genera,
+                      input_validation=reapply.validate_genus_table,
+                      citation=(
+                          "Frioux, C. et al. Enterosignatures define common "
+                          "bacterial guilds in the human gut microbiome. "
+                          "Cell Host & Microbe 31, 1111-1125.e6 (2023)."
+                          " https://doi.org/10.1016/j.chom.2023.05.024")
+                      )
+
 
 def five_es_x() -> pd.DataFrame:
     """The genus level relative abundance data used to train five ES model in
@@ -38,6 +91,7 @@ def five_es_x() -> pd.DataFrame:
         index_col=0
     )
 
+
 def example_abundance() -> pd.DataFrame:
     """The genus level relative abundance data for Non-Western cohort from
     Frioux et al. (2023, https://doi.org/10.1016/j.chom.2023.05.024).
@@ -51,10 +105,14 @@ def example_abundance() -> pd.DataFrame:
         index_col=0
     )
 
+
 def synthetic_data(m: int = 100,
                    n: int = 100,
                    overlap: float = 0.25,
-                   k: int = 3) -> pd.DataFrame:
+                   k: int = 3,
+                   normal_noise_params: Optional[Dict] = None,
+                   scale_lognormal_params: Optional[Dict] = None
+) -> pd.DataFrame:
     """Create some simple synthetic data.
 
     Create an m x n matrix with blocks along the diagonal which overlap to an extent
@@ -64,10 +122,28 @@ def synthetic_data(m: int = 100,
     :param n: Number of columns in matrix
     :param overlap: Proportion of block length to participate in overlap
     :param k: Number of signatures
+    :param normal_noise_params: Parameters to pass to numpy.random.normal
+        to apply noise to entries. Leave as none to use default parameters.
+    :param scale_lognormal_params: Parameters to pass to numpy.random.lognormal
+        to scale each feature (give some features higher values than others).
+        If set to true, will use default parameters for distribution. Leave as
+        None to skip feature scaling.
     """
 
     # Matrix dimensions
     i, j = m, n
+
+    # Noise parameters
+    do_scale: bool = scale_lognormal_params is not None
+    scale_lognormal_params: Dict = (
+        dict() if scale_lognormal_params is None or
+        not isinstance(scale_lognormal_params, dict)
+        else scale_lognormal_params
+    )
+    normal_noise_params = (
+        dict() if scale_lognormal_params is None
+             else scale_lognormal_params
+    )
 
     # Width of blocks without overlap
     base_h, tail_h = divmod(i, k)
@@ -93,8 +169,18 @@ def synthetic_data(m: int = 100,
     # Apply noise from normal distribution
     block_mat = block_mat + np.absolute(
         np.random.normal(loc=0.0, scale=0.1, size=(i, j)))
+    # Scale features
+    if do_scale:
+        fscale: np.ndarray = np.random.lognormal(
+            **scale_lognormal_params,
+            size=m
+        )
+        block_mat = fscale.reshape(-1, 1) * block_mat
     # Convert to DataFrame and add some proper naming for rows/cols
-    return pd.DataFrame(
+    df: pd.DataFrame = pd.DataFrame(
         block_mat,
         index=[f'feat_{i_lab}' for i_lab in range(i)],
         columns=[f'samp_{j_lab}' for j_lab in range(j)])
+    # TSS scale
+    df = df / df.sum()
+    return df

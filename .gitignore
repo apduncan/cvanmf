@@ -1,7 +1,8 @@
 docs/_build
 dist
 .pytest_cache
+htmlcov
 .idea
-.coverage
+.coverage*
 test/
 *.pyc

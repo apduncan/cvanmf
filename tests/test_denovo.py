@@ -1,23 +1,21 @@
 """Tests for denovo ES generation."""
 import itertools
-import math
-import os
 import pathlib
-import random
 import re
-from typing import List, Dict
+from typing import List, Dict, Iterable, Tuple, Set, Optional
 
-from click.testing import CliRunner
 import matplotlib.pyplot
 import numpy as np
 import pandas as pd
-import plotnine
 import pytest
+from click.testing import CliRunner
 
 from cvanmf import models
 from cvanmf.denovo import BicvSplit, BicvFold, bicv, _cosine_similarity, \
     rank_selection, BicvResult, plot_rank_selection, decompose, NMFParameters, \
-    decompositions, Decomposition, cli_rank_selection
+    decompositions, Decomposition, cli_rank_selection, regu_selection, \
+    plot_regu_selection
+from cvanmf.reapply import match_identical
 
 
 # Deal with matplotlib backend
@@ -30,7 +28,8 @@ def pyplot_backend():
 def small_overlap_blocks(scope="session") -> pd.DataFrame:
     """Small overlapping block diagonal matrix with k=4, for use in testing
     de-novo methods."""
-    return models.synthetic_data(100, 100, 0.25, 3)
+    return models.synthetic_data(100, 100, 0.25, 3,
+                                 scale_lognormal_params=True)
 
 
 @pytest.fixture
@@ -58,6 +57,20 @@ def small_rank_selection(
         ranks=list(range(2, 7)),
         shuffles=5,
         seed=4298,
+        progress_bar=False
+    )
+
+
+@pytest.fixture
+def small_regu_selection(
+        small_overlap_blocks,
+        scope="sesson"
+) -> Tuple[float, Dict[float, List[BicvResult]]]:
+    return regu_selection(
+        x=small_overlap_blocks,
+        rank=3,
+        shuffles=5,
+        seed=4928,
         progress_bar=False
     )
 
@@ -110,6 +123,29 @@ def small_decompositions_deterministic(
         progress_bar=False
     )
     return res
+
+
+@pytest.fixture()
+def small_decomposition_metadata_cd(
+        small_decomposition
+) -> pd.DataFrame:
+    """Random metadata with continuous and discrete columns"""
+    rnd_cat: pd.DataFrame = pd.Series(
+        np.random.choice(["A", "B"], size=small_decomposition.h.shape[1]),
+        index=small_decomposition.h.columns
+    ).to_frame(name="rand_cat")
+    rnd_cat['rand_cat_too'] = (
+        small_decomposition
+        .scaled("h")
+        .idxmax().astype("str")
+    )
+    rnd_cat['rand_cat_na'] = rnd_cat['rand_cat_too'].replace("S3", np.nan)
+    rnd_cat['rand_cat_categorical'] = pd.Categorical(
+        rnd_cat['rand_cat_too'],
+        categories=rnd_cat['rand_cat_too'].unique()
+    )
+    rnd_cat['rand_cont'] = np.random.uniform(size=rnd_cat.shape[0])
+    return rnd_cat
 
 
 def is_decomposition_close(a: Decomposition, b: Decomposition) -> bool:
@@ -182,8 +218,28 @@ def test_bicv_split(small_overlap_blocks):
     assert not all(shuffles[0].x.columns == df.columns), \
         "Columns not shuffled"
 
-    # Get folds
-    shuffles[0].fold(0)
+    # Attempting to initialise with incorrect number of submatrices should
+    # raise an exception
+    with pytest.raises(ValueError):
+        mx8 = list(itertools.chain.from_iterable(shuffles[0].mx))[:-1]
+        _ = BicvSplit(mx8)
+
+    # Getting a row without joining
+    row_list: List[pd.DataFrame] = shuffles[0].row(0, join=False)
+    col_list: List[pd.DataFrame] = shuffles[1].col(0, join=False)
+    assert isinstance(row_list, list), \
+        "Row not returned as list when join=False"
+    assert isinstance(col_list, list), \
+        "Column not returned as list when join=False"
+
+    # Out of range fold
+    with pytest.raises(IndexError):
+        shuffles[0].fold(9)
+
+    folds: List[BicvFold] = shuffles[0].folds
+    assert len(folds) == 9, "Should have 9 folds"
+    assert all([isinstance(x, BicvFold) for x in folds]), \
+        "folds property returns incorrect type"
 
 
 def test_bicv_folds(small_overlap_blocks):
@@ -244,6 +300,10 @@ def test_bicv_split_io(
     # Error on unforced overwrite
     with pytest.raises(FileExistsError):
         shuffles[0].save_npz(tmp_path)
+    with pytest.raises(ValueError):
+        shuffles[0].i, i = None, shuffles[0].i
+        shuffles[0].save_npz(tmp_path, force=True)
+    shuffles[0].i = i
     # Output all with force
     BicvSplit.save_all_npz(shuffles, tmp_path, force=True)
     # Count number of output files
@@ -257,13 +317,23 @@ def test_bicv_split_io(
     assert all(np.isclose(shuffle_0.x.values, shuffles[0].x.values).ravel()), \
         "Loaded object is not equivalent to source object"
     # Load multiple
-    shuffles_loaded: List[BicvSplit] = BicvSplit.load_all_npz(tmp_path)
+    shuffles_loaded: List[BicvSplit] = BicvSplit.load_all_npz(tmp_path,
+                                                              fix_i=True)
     # Should be equal to shuffles
     assert all(
         np.array_equal(a.x.values, b.x.values)
         for a, b in zip(shuffles, shuffles_loaded)
     ), \
         "Loaded matrices not equivalent to those saved"
+
+    # Non-unique values of i
+    shuffles[0].i = shuffles[1].i
+    with pytest.raises(ValueError):
+        BicvSplit.save_all_npz(shuffles, tmp_path, force=True)
+    # fix_i should renumber
+    BicvSplit.save_all_npz(shuffles, tmp_path, force=True, fix_i=True)
+    unique_i: Set[Optional[int]] = set(x.i for x in shuffles)
+    assert len(unique_i) == len(shuffles)
 
 
 def test_bicv(small_bicv_result: BicvResult):
@@ -273,9 +343,11 @@ def test_bicv(small_bicv_result: BicvResult):
     # TODO: Complete tests, only checks for execution without error currently
     assert res.a is None, \
         "A' matrix returned when should be None due to keep_mats."
+    assert res.parameters.x is None, \
+        "X matrix should not be returned when keep_mats=False"
     # Check not getting any invalid values in result series
     for name, val in res._asdict().items():
-        if name in {'parameters', 'a'}:
+        if name in {'parameters', 'a', 'i'}:
             continue
         assert all(~np.isnan(val)), \
             f"NAs in {name}"
@@ -308,6 +380,22 @@ def test_rank_selection(small_rank_selection: Dict[int, List[BicvResult]]):
          "Some runs probably failed.")
     # Check getting correct result types
     for res in itertools.chain.from_iterable(small_rank_selection.values()):
+        assert isinstance(res, BicvResult)
+    # No more checks here, test properties of BicvResult elsewhere
+
+
+def test_regu_selection(
+        small_regu_selection: Tuple[float, Dict[float, List[BicvResult]]]):
+    """Test output of a small regularisation selection run. Regularisation
+    selection is actually run in a fixture, so result can be shared between
+    tests."""
+    est, res = small_regu_selection
+    res_num: List[int] = [len(x) for x in res.values()]
+    assert all(x == res_num[0] for x in res_num[1:]), \
+        ("Different numbers of results for some ranks."
+         "Some runs probably failed.")
+    # Check getting correct result types
+    for res in itertools.chain.from_iterable(res.values()):
         assert isinstance(res, BicvResult)
     # No more checks here, test properties of BicvResult elsewhere
 
@@ -350,6 +438,20 @@ def test_plot_rank_selection(
     assert pth.stat().st_size > 0, "Plot file is empty"
 
 
+def test_plot_regu_selection(
+        tmp_path: pathlib.Path,
+        small_regu_selection
+):
+    best_alpha, res = small_regu_selection
+    plt = plot_regu_selection(small_regu_selection,
+                              exclude=None, geom="box")
+    pth = (tmp_path / "test_regu_sel.png")
+    plt.save(pth)
+    # Test that the file exists and isn't empty
+    assert pth.exists(), "Plot file not created"
+    assert pth.stat().st_size > 0, "Plot file is empty"
+
+
 def test_plot_model_fit_point(
         tmp_path: pathlib.Path,
         small_decomposition
@@ -373,9 +475,56 @@ def test_plot_relative_weight(
         np.random.choice(["A", "B"], size=small_decomposition.h.shape[1]),
         index=small_decomposition.h.columns
     )
-    plt = small_decomposition.plot_relative_weight(group=rnd_cat, model_fit=True)
+    # Add a sample that is not in the decomposition
+    rnd_cat.loc['dn3259nfn'] = 'C'
+    # Remove one sample that should be there
+    rnd_cat = rnd_cat.drop(index=[rnd_cat.index[0]])
+    plt = small_decomposition.plot_relative_weight(
+        group=rnd_cat,
+        model_fit=True,
+        heights=dict(ribbon=2, bar=2, nonsense=2),
+        sample_label_size=3.0,
+        legend_cols_h=2,
+        legend_cols_v=2
+    )
     pth = (tmp_path / "test_rank_sel.png")
     plt.savefig(pth)
+    # Test that the file exists and isn't empty
+    assert pth.exists(), "Plot file not created"
+    assert pth.stat().st_size > 0, "Plot file is empty"
+
+
+def test_plot_feature_weight(
+        tmp_path: pathlib.Path,
+        small_decomposition
+):
+    matplotlib.pyplot.switch_backend("Agg")
+    plt = small_decomposition.plot_feature_weight(threshold=0.02)
+    pth = (tmp_path / "test_feature_weight.png")
+    plt.save(pth)
+    # Test that the file exists and isn't empty
+    assert pth.exists(), "Plot file not created"
+    assert pth.stat().st_size > 0, "Plot file is empty"
+
+
+def test_plot_pcoa(
+        tmp_path: pathlib.Path,
+        small_decomposition
+):
+    matplotlib.pyplot.switch_backend("Agg")
+    rnd_cat: pd.Series = pd.Series(
+        np.random.choice(["A", "B"], size=small_decomposition.h.shape[1]),
+        index=small_decomposition.h.columns
+    )
+    rnd_cat.name = "Random Category"
+    plt = small_decomposition.plot_pcoa(
+        color=rnd_cat,
+        shape="signature",
+        point_aes=dict(size=5, alpha=0.3),
+        signature_arrows=True
+    )
+    pth = (tmp_path / "test_pcoa.png")
+    plt.save(pth)
     # Test that the file exists and isn't empty
     assert pth.exists(), "Plot file not created"
     assert pth.stat().st_size > 0, "Plot file is empty"
@@ -640,6 +789,7 @@ def test_load(small_decomposition: Decomposition,
     loaded_comp: Decomposition = Decomposition.load(str(path_targz))
     is_decomposition_close(small_decomposition, loaded_comp)
 
+
 def test_colors(small_overlap_blocks):
     """Check default colours get set correctly."""
 
@@ -653,6 +803,7 @@ def test_colors(small_overlap_blocks):
     assert all(hex_reg.match(x) is not None for x in k7.colors), \
         "Expected all default colors to be hex codes (i.e. #000fff)"
 
+
 def test_slicing(small_decomposition):
     """Do all the different slicing methods work?"""
 
@@ -665,3 +816,67 @@ def test_slicing(small_decomposition):
         "Sliced Decomposition has incorrect dimensions"
     with pytest.raises(IndexError):
         slcd = small_decomposition[[0, 4], ["A non existent sample"]]
+
+
+def test_reapply(small_decomposition):
+    """Can new data be transformed using the model?"""
+    # TODO: Improve this test, only checks it does not crash currently
+    new_decomp: Decomposition = small_decomposition.reapply(
+        y=small_decomposition.x,
+        input_validation=lambda x, **kwargs: x,
+        feature_match=match_identical,
+        family_rollup=True
+    )
+    # This should generate similar h matrices
+    # Should they be more similar than this?
+    assert np.allclose(small_decomposition.h, new_decomp.h,
+                       atol=0.025), \
+        "Signature weights not equal for identical data."
+
+
+def test_nmf_parameters(small_overlap_blocks):
+    nmf_params: NMFParameters = NMFParameters(small_overlap_blocks, 2)
+    log_str: str = nmf_params.log_str
+    assert len(log_str) > 0, "Parameter log string should not be empty"
+
+
+def test_univariate_tests(small_decomposition):
+    rnd_cat: pd.DataFrame = pd.Series(
+        np.random.choice(["A", "B"], size=small_decomposition.h.shape[1]),
+        index=small_decomposition.h.columns
+    ).to_frame(name="rand_cat")
+    rnd_cat['rand_cat_too'] = (
+        small_decomposition
+        .scaled("h")
+        .idxmax().astype("str")
+    )
+    rnd_cat['rand_cat_na'] = rnd_cat['rand_cat_too'].replace("S3", np.nan)
+    small_decomposition.univariate_tests(metadata=rnd_cat)
+
+
+def test_plot_metadata(
+        small_decomposition,
+        small_decomposition_metadata_cd,
+        tmp_path: pathlib.Path
+):
+    disc_plt, cont_plt = small_decomposition.plot_metadata(
+        metadata=small_decomposition_metadata_cd
+    )
+    disc_pth = (tmp_path / "test_disc.png")
+    disc_plt.save(disc_pth)
+    # Test that the file exists and isn't empty
+    assert disc_pth.exists(), "Plot file not created"
+    assert disc_pth.stat().st_size > 0, "Plot file is empty"
+    cont_pth = (tmp_path / "test_cont.png")
+    cont_plt.save(cont_pth)
+    # Test that the file exists and isn't empty
+    assert cont_pth.exists(), "Plot file not created"
+    assert cont_pth.stat().st_size > 0, "Plot file is empty"
+
+
+def test_name_signatures_by_weight(
+        small_decomposition
+):
+    small_decomposition.name_signatures_by_weight(
+        max_char_length=20
+    )
