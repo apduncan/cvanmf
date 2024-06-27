@@ -1,16 +1,24 @@
 """
-Generate new Enterosignature models using NMF decomposition
+Generate new models using NMF decomposition
 
-It is likely that additional Enterosignatures exist in data with different
-populations, or new Enterosignatures might become evident with ever-increasing
-taxonomic resolution. This module provides functions to generate new models
-from data, which encompasses three main steps: rank selection, regularisation
+This module provides functions to generate new models from data,
+which encompasses three main steps: rank selection, regularisation
 selection, and model inspection. The first of these two steps involves
 running decompositions multiple times for a range of values, and can be
 time-consuming. Methods are provided to run the whole process on a single
 machine, but also for running individual decompositions, which are used by the
 accompanying nextflow pipeline to allow spreading the computation across
 multiple nodes in an HPC environment.
+
+The main functions for each step are
+
+* :func:`rank_selection` and :func:`plot_rank_selection`
+* :func:`regu_selection` and :func:`plot_regu_selection`
+* :func:`decompositions` which produces :class:`Decomposition` objects
+
+Individual decompositions are represented by a :class:`Decomposition` object,
+and visualisation and analysis are carried out using object methods (such as
+:meth:`Decomposition.plot_feature_weight()`).
 """
 from __future__ import annotations
 
@@ -52,9 +60,10 @@ from cvanmf.reapply import InputValidation, FeatureMatch, _reapply_model
 
 # Type aliases
 Numeric = Union[int, float]
-"""Alias for a python numeric types"""
+"""Alias for python numeric types (a union of int and float)."""
 PcoaMatrices = Literal['w', 'x', 'wh', 'signatures']
-"""Allowed matrices which PCoA can be constructed from"""
+"""Allowed matrices which PCoA can be constructed from. Allows values w, x, 
+wh, signatures (alias for w)."""
 
 DEF_SELECTION_ORDERING: List[str] = [
     "cosine_similarity",
@@ -65,7 +74,7 @@ DEF_SELECTION_ORDERING: List[str] = [
     "sparsity_h",
     "rss"
 ]
-"""Default ordering for rank selection and regularisation selection plots"""
+"""Default ordering for rank selection and regularisation selection plots."""
 DEF_PCOA_POINT_AES: Dict[str, Any] = dict(
     size=2,
     alpha=0.8
@@ -1656,11 +1665,13 @@ class Decomposition:
 
     Note that we use the naming conventions and orientation common in NMF
     literature:
+
     * X is the input matrix, with m features on rows, and n samples on columns.
     * H is the transformed data, with k signatures on rows, and n samples on
-        columns.
+      columns.
     * W is the feature weight matrix, with m features on rows, and m
-        features on columns.
+      features on columns.
+
     The scikit-learn implementation has these transposed; this package
     handles transposing back and forth internally, and expects input in the
     features x samples orientation, and provides W and H inline with the
@@ -1677,7 +1688,7 @@ class Decomposition:
     """Defines which criteria are available to select the best decomposition
     based on, and whether to take high values (True) or low values (False)."""
 
-    DEFAULT_SCALES: List[List[str]] = [
+    DEF_SCALES: List[List[str]] = [
         # Used by preference, Bang Wong's 7 distinct colours for colour
         # blindness, https://www.nature.com/articles/nmeth.1618 via
         # https://davidmathlogic.com/colorblind
@@ -1840,46 +1851,73 @@ class Decomposition:
 
     @property
     def h(self) -> pd.DataFrame:
+        """Signature by sample matrix of signature weights."""
         return self.__h
 
     @property
     def w(self) -> pd.DataFrame:
+        """Feature by signature matrix of signature weights."""
         return self.__w
 
     @property
     def parameters(self) -> NMFParameters:
+        """Parameters used during decomposition."""
         return self.__params
 
     @property
     def cosine_similarity(self) -> float:
+        """Cosine angle between flattened :math:`X` and :math:`WH`.
+
+        A measure of how well the model reconstructs the input data. Ranges
+        between 1 and 0, with 1 being perfect correlation, and 0 meaning the
+        model is perpendicular to the input (no correlation). The same
+        measure is available for each sample using :attr:`model_fit`.
+        """
         return float(_cosine_similarity(self.parameters.x.values,
                                         self.w.dot(self.h).values))
 
     @property
     def r_squared(self) -> float:
+        """Coefficient of determination (:math:`R^2`) between flattened
+        :math:`X` and :math:`WH`.
+
+        A measure of how well the model reconstructs the input data."""
         return _rsquared(self.parameters.x.values,
                          self.w.dot(self.h).values)
 
     @property
     def rss(self) -> float:
+        """Residual sum of squares between flattened :math:`X` and
+        :math:`WH`."""
         return _rss(self.parameters.x.values,
                     self.w.dot(self.h).values)
 
     @property
     def l2_norm(self) -> float:
+        """L2 norm between flattened :math:`X` and math:`WH`."""
         return _l2norm_calc(self.parameters.x.values,
                             self.w.dot(self.h).values)
 
     @property
     def sparsity_w(self) -> float:
+        """Sparsity of :attr:`w` matrix.
+
+        This is the proportion of entries in the :math:`W` matrix are 0.
+        """
         return _sparsity(self.w.values)
 
     @property
     def sparsity_h(self) -> float:
+        """Sparsity of :attr:`h` matrix.
+
+        This is the proportion of entries in the :math:`H` matrix are 0.
+        """
         return _sparsity(self.h.values)
 
     @property
     def beta_divergence(self) -> float:
+        """The beta divergence (using the method defined in the parameters
+        object) between :math:`X` and :math:`WH`."""
         return _beta_divergence(self.parameters.x,
                                 self.w.values,
                                 self.h.values,
@@ -1887,13 +1925,16 @@ class Decomposition:
 
     @property
     def wh(self) -> pd.DataFrame:
-        """Product of decomposed matrices W and H which approximates input,"""
+        """Product of decomposed matrices :math:`W` and :math:`H` which
+        approximates input."""
         return self.w.dot(self.h)
 
     @property
     def model_fit(self) -> pd.Series:
-        """How well each sample i is described by the model, expressed by the
-        cosine similarity between X_i and (WH)_i."""
+        """How well each sample :math:`i` is described by the model, expressed
+        by the cosine angle between :math:`X_i` and :math:`(WH)_i`. Cosine
+        angle ranges between 0 and 1 in this case, with 1 being good and 0
+        poor (perpendicular),"""
         cos_sim: pd.Series = pd.Series(
             np.diag(cosine_similarity(
                 self.wh.T, self.parameters.x.T)),
@@ -1918,12 +1959,12 @@ class Decomposition:
 
     @property
     def names(self) -> List[str]:
-        """Names for each of the k signatures."""
+        """Names for each of the signatures."""
         return list(self.h.index)
 
     @names.setter
     def names(self, names: Iterable[str]) -> None:
-        """Set names for each of the k signatures. Renames the H and W
+        """Set names for each of the signatures. Renames the H and W
         matrices."""
         n_lst: List[str] = list(names)
         if len(n_lst) != self.h.shape[0]:
@@ -1939,7 +1980,7 @@ class Decomposition:
         """Signature with the highest weight for each sample.
 
         The primary signature for a sample is the one with the highest weight
-        in the H matrix. In the unusual case where all signatures have 0
+        in the math:`H` matrix. In the unusual case where all signatures have 0
         weight for a sample, this will return NaN, and is likely a sign of
         a poor model."""
         # Replace 0s with NA, as cannot have a max when picking between 0s
@@ -2003,16 +2044,16 @@ class Decomposition:
     def feature_mapping(self) -> 'reapply.FeatureMapping':
         """Mapping of new data features to those in the model being reapplied
 
-        When fitting new data to an existing model, the naming of feature may vary or
-        some features may not exist in the model. This property holds an object which
-        maps from the new data features to the model features. For de-novo decompositions
-        this will be None.
+        When fitting new data to an existing model, the naming of feature may
+        vary or some features may not exist in the model. This property holds an
+        object which maps from the new data features to the model features.
+        For de-novo decompositions this will be None.
         """
         return self.__feature_mapping
 
     @property
     def color_scale(self) -> plotnine.scale_color_discrete:
-        """Plotnine scale for color aesthetic using signature colors"""
+        """Plotnine scale for color aesthetic using signature colors."""
         color_dict: Dict[str, str] = dict(zip(
             self.names, self.colors))
         color_scale = plotnine.scale_color_manual(
@@ -2023,7 +2064,7 @@ class Decomposition:
 
     @property
     def fill_scale(self) -> plotnine.scale_fill_discrete:
-        """Plotnine scale for fill aesthetic using signature colors"""
+        """Plotnine scale for fill aesthetic using signature colors."""
         color_dict: Dict[str, str] = dict(zip(
             self.names, self.colors))
         fill_scale = plotnine.scale_fill_manual(
@@ -3517,16 +3558,16 @@ class Decomposition:
         desired, Sasha Trubetskoy's 20 distinct colours are used
         (https://sashamaps.net/docs/resources/20-colors/) and duplicate with
         warning when there are too many signatures."""
-        pal_len: List[int] = [len(x) for x in Decomposition.DEFAULT_SCALES]
+        pal_len: List[int] = [len(x) for x in Decomposition.DEF_SCALES]
         if n <= max(pal_len):
-            return next(x for x in Decomposition.DEFAULT_SCALES
+            return next(x for x in Decomposition.DEF_SCALES
                         if n <= len(x))[:n]
         else:
             logging.warning("Some colours are duplicated when plotting over 20 "
                             "signatures")
             return (
-                (Decomposition.DEFAULT_SCALES[-1] *
-                 math.ceil(n / len(Decomposition.DEFAULT_SCALES)))[:n]
+                (Decomposition.DEF_SCALES[-1] *
+                 math.ceil(n / len(Decomposition.DEF_SCALES)))[:n]
             )
 
 
