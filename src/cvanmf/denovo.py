@@ -807,6 +807,8 @@ def rank_selection(x: pd.DataFrame,
 
 def plot_rank_selection(results: Dict[Union[int, float], List[BicvResult]],
                         exclude: Optional[Iterable[str]] = None,
+                        include: Optional[Iterable[str]] = None,
+                        show_all: bool = False,
                         geom: str = 'box',
                         summarise: Literal['mean', 'median'] = 'mean',
                         jitter: bool = None,
@@ -822,10 +824,16 @@ def plot_rank_selection(results: Dict[Union[int, float], List[BicvResult]],
     A and A' from all bi-cross validation results across a range of ranks.
     The plotting library used is `plotnine`; the returned plot object
     can be saved or drawn using `plt_obj.save` or `plt_obj.draw` respectively.
+    By default, only cosine_similarity and r_squared are plotted. You can
+    define which measures to include using include, or which to exclude using
+    exclude. You can also use show_all to show all the measures.
 
     :param results: Dictionary of results, with rank as key and a list of
         :class:`BicvResult` for that rank as value
     :param exclude: Measures from :class:`BicvResult` not to plot.
+    :param include: Measures from :class:`BicvResult` to plot.
+    :param show_all: Show all measures, ignoring anything set in include or
+        exclude.
     :param geom: Type of plot to draw. Accepts either 'box' or 'violin'
     :param summarise: How to summarise the statistics across the folds
         of a given shuffle.
@@ -839,11 +847,14 @@ def plot_rank_selection(results: Dict[Union[int, float], List[BicvResult]],
         will rotate if x-axis is float.
     :return: :class:`plotnine.ggplot` instance
     """
-    # Intended a user friendly interface to plot rank selection results
+    # Intended as a user friendly interface to plot rank selection results
     # so takes string argument rather than functions etc.
     if summarise not in ['mean', 'median']:
         raise ValueError("summarise must be one of mean, median")
+    if include is None and exclude is None:
+        include = {'cosine_similarity', 'r_squared'}
     exclude = {} if exclude is None else exclude
+    include = {} if include is None else include
     summarise_fn: Callable[[np.ndarray], float] = (
         np.mean if summarise == "mean" else np.median)
     # What type of plot to draw
@@ -858,11 +869,19 @@ def plot_rank_selection(results: Dict[Union[int, float], List[BicvResult]],
         n_col = 3 if len(results) < 15 else 1
 
     # Determine which columns we're interested in plotting
-    measures: list[str] = list(set(
+    measures: set[str] = set(
         name for (name, value) in
         inspect.getmembers(
             BicvResult, lambda x: isinstance(x, collections._tuplegetter))
-    ).difference({"a", "parameters", "i", *exclude}).union({xaxis}))
+    ).difference({"a", "parameters", "i"})
+    if not show_all:
+        # First exclude anything explicitly requested to be removed in exclude
+        measures = measures.difference(exclude)
+        if len(include) > 0:
+            # Subset to the intersection of all measures and those requested
+            measures = measures.intersection(include)
+    # Add the xaxis (could be rank or alpha)
+    measures = list(measures.union({xaxis}))
     # Get results and stack so measure is a column
     df: pd.DataFrame = (
         BicvResult.results_to_table(results, summarise=summarise_fn)[measures]
@@ -1694,7 +1713,7 @@ class Decomposition:
         # https://davidmathlogic.com/colorblind
         ['#E69F00', '#56B4E9', '#009E73', '#F0E442', '#0072B2',
          '#D55E00', '#CC79A7', '#000000'],
-        # Sarah Trubetskoy's 20 distinct colours
+        # Sasha Trubetskoy's 20 distinct colours
         # https://sashamaps.net/docs/resources/20-colors/
         ['#e6194B', '#3cb44b', '#ffe119', '#4363d8', '#f58231', '#911eb4',
          '#42d4f4', '#f032e6', '#bfef45', '#fabed4', '#469990', '#dcbeff',
@@ -2122,18 +2141,39 @@ class Decomposition:
 
     def reapply(self,
                 y: pd.DataFrame,
-                input_validation: InputValidation,
-                feature_match: FeatureMatch,
+                input_validation: Optional[InputValidation] = None,
+                feature_match: Optional[FeatureMatch] = None,
                 **kwargs
                 ) -> Decomposition:
         """Get signature weights for new data.
+
+        When the features in y exactly match those used to learn this
+        decomposition, you can set the input_validation and feature_match
+        parameters as None.
+
+        In some cases, the features in new data y may not exactly match
+        those used in the original decomposition, for instance if you have new
+        microbiome data there may be different taxa present, or a different
+        naming format may be used in the new data. The function feature_match
+        can be used to handle these cases, by defining a function to map names
+        between new and existing data. The input_validation functions is
+        largely used for existing models, to valdiate that data being provided
+        is the expected format.
 
         :param y: New data of the same type used to generate this decomposition
         :param input_validation: Function to validate and transform y
         :param feature_match: Function to match features in y and w
         :param kwargs: Arguments to pass to validate_input and feature_match
+        :return: :class:`Decomposition` with signature weights for samples in
+            y.
         """
         # Wrapper around the _reapply_model function
+        from cvanmf.reapply import match_identical
+        if input_validation is None:
+            input_validation = lambda x, **kwargs: x
+        if feature_match is None:
+            feature_match = match_identical
+
         return _reapply_model(
             y=y,
             w=self.w,
@@ -2255,7 +2295,7 @@ class Decomposition:
         well their paired one, while being dissimilar to all others.
 
         This is a convenince method which calls
-        :func:`combine.match_signatures`.
+        :func:`cvanmf.combine.match_signatures`.
 
         :param b: Signature matrix, or object with signature matrix
         :returns: DataFrame with pairing and scores
@@ -2300,7 +2340,7 @@ class Decomposition:
             feat_list: List[str] = list(
                 sig_series
                 .sort_values(ascending=False)
-                .iloc[:min(max_num_features, len(sig_series)) - 1]
+                .iloc[:min(max_num_features, len(sig_series) - 1)]
                 .index
             )
             feat_list = feat_list[:min(max_num_features, len(feat_list))]
@@ -2356,6 +2396,7 @@ class Decomposition:
         df.columns = ["model_fit", "group"]
         # Warn if any samples dropped
         # Warn if any sample in grouping not in model fit
+        xlab: str = group.name if group.name is not None else "group"
         return (
                 plotnine.ggplot(df, mapping=plotnine.aes(
                     x="group", y="model_fit")) +
@@ -2363,24 +2404,26 @@ class Decomposition:
                 plotnine.ylab("Cosine Similarity") +
                 plotnine.theme(
                     axis_text_x=plotnine.element_text(angle=90)
-                )
+                ) +
+                plotnine.xlab(xlab)
         )
 
     def plot_modelfit_point(self,
                             threshold: Optional[float] = 0.4,
-                            yrange: Optional[Tuple[float, float]] = (0, 1)
+                            yrange: Optional[Tuple[float, float]] = (0, 1),
+                            point_size: float = 1.0
                             ) -> plotnine.ggplot:
         """Model fit for each sample as a point on a vertical scale.
 
-        It may be of interest to look at the model fit of individual samples, so this
-        plot shows the model fit of each sample as a point on a vertical scale. A
-        threshold can be set below which the point will be coloured red to indicate
-        low model fit, by default this is 0.4. The plot is intended to behave well
-        when vertically stacked with that relative weight plot produced by
-        :method:`plot_relative_weight`
+        It may be of interest to look at the model fit of individual samples,
+        so this plot shows the model fit of each sample as a point on a
+        vertical scale. A threshold can be set below which the point will be
+        coloured red to indicate low model fit, by default this is 0.4. The
+        plot is intended to behave well when vertically stacked with the
+        relative weight plot produced by :meth:`plot_relative_weight`
 
-        :param threshold: Value below which to colour the model fit red. If omitted
-            will not color any samples.
+        :param threshold: Value below which to colour the model fit red. If
+            omitted will not color any samples.
         """
         mf_df: pd.DataFrame = (self.model_fit
                                .to_frame("model_fit")
@@ -2394,7 +2437,7 @@ class Decomposition:
             mf_df,
             mapping=mapping
         ) +
-                                plotnine.geom_point() +
+                                plotnine.geom_point(size=point_size) +
                                 plotnine.theme_minimal() +
                                 plotnine.theme(
                                     panel_grid_major_x=plotnine.element_blank(),
@@ -2605,11 +2648,14 @@ class Decomposition:
                                    axis_text_y=plotnine.element_blank(),
                                    axis_ticks_minor_x=plotnine.element_blank(),
                                    axis_ticks_minor_y=plotnine.element_blank(),
+                                   axis_ticks_major_y=plotnine.element_blank(),
                                    legend_position="bottom"
                                    ) +
                     plotnine.guides(
-                        fill=plotnine.guide_legend(ncol=legend_cols_h,
-                                                   order=1)
+                        fill=plotnine.guide_legend(
+                            ncol=legend_cols_h,
+                            order=1
+                        )
                     )
             )
         if model_fit:
@@ -2796,7 +2842,7 @@ class Decomposition:
             or 'signature' to base shape on the primary signature
         :param signature_arrows: Plot location of signatures as arrows
         :param point_aes: Dictionary of arguments to pass to geom_point
-        :param kwargs: arguments to pass to :method:`pcoa`
+        :param kwargs: arguments to pass to :meth:`pcoa`
         :return: Scatter plot of samples
         """
 
@@ -3319,7 +3365,7 @@ class Decomposition:
         possible.
 
         :param decompositions: Decompositions in form output by
-            :function:`decompositions`.
+            :func:`decompositions`.
         :param output_dir: Directory to write to which is either empty or
             does not exist.
         :param symlink: Symlink the parameters and input X files.
@@ -3405,7 +3451,7 @@ class Decomposition:
              delim: str = "\t"):
         """Load a decomposition from disk.
 
-        Loads a decomposition previously saved using :method:`save`. Will
+        Loads a decomposition previously saved using :meth:`save`. Will
         automatically determine whether this is a directory or .tar.gz.
         Can provide a DataFrame of the X input matrix, primarily this is
         so when loading multiple decompositions they can all reference the
@@ -3484,7 +3530,7 @@ class Decomposition:
         """Load multiple decompositions.
 
         Load a set of decompositions previously saved using
-        :method:`save_decompositions`. Will attempt to share a reference to
+        :meth:`save_decompositions`. Will attempt to share a reference to
         the same X matrix for memory reasons. The output is a dictionary
         with keys being ranks, and values being lists of decompositions
         for that rank.

@@ -7,6 +7,7 @@ from typing import List, Dict, Iterable, Tuple, Set, Optional
 import matplotlib.pyplot
 import numpy as np
 import pandas as pd
+import plotnine
 import pytest
 from click.testing import CliRunner
 
@@ -485,7 +486,7 @@ def test_plot_relative_weight(
         heights=dict(ribbon=2, bar=2, nonsense=2),
         sample_label_size=3.0,
         legend_cols_h=2,
-        legend_cols_v=2
+        legend_cols_v=2,
     )
     pth = (tmp_path / "test_rank_sel.png")
     plt.savefig(pth)
@@ -833,6 +834,16 @@ def test_reapply(small_decomposition):
                        atol=0.025), \
         "Signature weights not equal for identical data."
 
+    # Test with defaults
+    new_decomp: Decomposition = small_decomposition.reapply(
+        y=small_decomposition.x
+    )
+    # This should generate similar h matrices
+    # Should they be more similar than this?
+    assert np.allclose(small_decomposition.h, new_decomp.h,
+                       atol=0.025), \
+        "Signature weights not equal for identical data."
+
 
 def test_nmf_parameters(small_overlap_blocks):
     nmf_params: NMFParameters = NMFParameters(small_overlap_blocks, 2)
@@ -878,5 +889,5 @@ def test_name_signatures_by_weight(
         small_decomposition
 ):
     small_decomposition.name_signatures_by_weight(
-        max_char_length=20
+        max_char_length=20, max_num_features=1
     )
