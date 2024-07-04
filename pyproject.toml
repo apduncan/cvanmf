@@ -41,8 +41,9 @@ remove_dist = false                         # don't remove dists
 patch_without_tag = true                    # patch release by default
 
 [tool.poetry.scripts]
-es_fit = "cvanmf.reapply:cli"
+reapply = "cvanmf.reapply:cli"
 rank_select = "cvanmf.denovo:cli_rank_selection"
+regu_select = "cvanmf.denovo:cli_regu_selection"
 decompose = "cvanmf.denovo:cli_decompose"
 
 [build-system]

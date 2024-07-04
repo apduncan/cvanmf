@@ -86,6 +86,8 @@ DEF_RELATIVE_WEIGHT_HEIGHTS: Dict[str, float] = dict(
     dot=.5
 )
 """Default heights for relative weight plot"""
+DEF_ALPHAS: List[float] = [2 ** i for i in range(-5, 2)]
+"""Default alpha values for regularisation selection"""
 
 
 class BicvFold(NamedTuple):
@@ -987,8 +989,8 @@ def regu_selection(x: pd.DataFrame,
         blank a default range will be used.
     :param scale_samples: Divide alpha by number of samples. This is provided
         as the way regularisation is performed changed in newer sklearn
-        versions, and alpha is multiplieed by n_samples. Setting this to True
-        results in the same calculaton as earlier sklearn versions, such as
+        versions, and alpha is multiplied by n_samples. Setting this to True
+        results in the same calculation as earlier sklearn versions, such as
         the one used in the Enterosignatures paper. If this is set it is
         honoured; if left as None, when automatic alpha range is calculated
         they will be scaled by sample, when alpha range specified will not be
@@ -1350,7 +1352,8 @@ def _write_symlink(path: pathlib.Path,
               default="\t",
               help="""Delimiter to use for input and output tables. Defaults
               to tab.""")
-@click.option("--shuffles",
+@click.option("-s",
+              "--shuffles",
               required=False,
               type=int,
               default=100,
@@ -1516,6 +1519,204 @@ def cli_rank_selection(
     # Completion
     logging.info("Rank selection completed")
 
+
+@click.command()
+@click.option("-i",
+              "--input",
+              required=True,
+              type=click.Path(exists=True, dir_okay=False),
+              help="""Matrix to be decomposed, in character delimited 
+              format. Use -d/--delimiter to set delimiter.""")
+@click.option("-o",
+              "--output_dir",
+              required=False,
+              type=click.Path(dir_okay=True),
+              default=os.getcwd(),
+              help="""Directory to write output. Defaults to current directory.
+              Output is a table with a row for each shuffle and rank 
+              combination, and columns for each of the rank selection measures 
+              (R^2, cosine similarity, etc.)""")
+@click.option("-d",
+              "--delimiter",
+              required=False,
+              type=str,
+              default="\t",
+              help="""Delimiter to use for input and output tables. Defaults
+              to tab.""")
+@click.option("-s",
+              "--shuffles",
+              required=False,
+              type=int,
+              default=100,
+              show_default=True,
+              help="""Number of times to shuffle input matrix. Bi-cross 
+              validation is run once on each shuffle, for each rank.""")
+@click.option("--progress/--no-progress",
+              default=True,
+              show_default=True,
+              help="""Display progress bar showing number of bi-cross 
+              validation iterations completed and remaining.""")
+@click.option("--log_warning", "verbosity", flag_value="warning",
+              default=True,
+              help="Log only warnings or higher.")
+@click.option("--log_info", "verbosity", flag_value="info",
+              help="Log progress information as well as warnings etc.")
+@click.option("--log_debug", "verbosity", flag_value="debug",
+              help="Log debug info as well as info, warnings, etc.")
+@click.option("--seed",
+              required=False,
+              type=int,
+              help="""Seed to initialise random state. Specify if results
+              need to be reproducible.""")
+@click.option("--l1_ratio",
+              required=False,
+              type=float,
+              default=1.0,
+              show_default=True,
+              help="""Regularisation mixing parameter. In range 0.0 <= l1_ratio 
+              <= 1.0. This controls the mix between sparsifying and densifying
+              regularisation. 1.0 will encourage sparsity, 0.0 density.""")
+@click.option("--rank",
+              "-k",
+              required=True,
+              type=int,
+              help="""Number of signatures in the decomposition. 
+              Regularisation is selected for a given rank, and the optimal 
+              value may vary between ranks.""")
+@click.option("--max_iter",
+              required=False,
+              type=int,
+              default=3000,
+              show_default=True,
+              help="""Maximum number of iterations during decomposition. Will 
+              terminate earlier if solution converges. Warnings will be emitted
+              when the solutions fail to converge.""")
+@click.option("--beta_loss",
+              required=False,
+              type=click.Choice(
+                  ['kullback-leibler', 'frobenius', 'itakura-saito']),
+              default="kullback-leibler",
+              show_default=True,
+              help="""Beta loss function for NMF decomposition.""")
+@click.option("--init",
+              required=False,
+              type=click.Choice(
+                  ["nndsvdar", "random", "nndsvd", "nndsvda"]),
+              default="nndsvdar",
+              show_default=True,
+              help="""Method to use when intialising H and W for 
+              decomposition.""")
+@click.option("--scale/--no-scale",
+              required=False,
+              type=bool,
+              default=True,
+              show_default=True,
+              help="""Scale alpha parameter by number of samples. 
+              Setting this to True provides the same behaviour as was applied 
+              in earlier versions of scikit-learn. This is done by default,
+              as the default alpha values are selected to work with this 
+              regularisation calculation. The alpha values reported in the 
+              output will be the scaled alpha values."""
+              )
+@click.argument("alpha",
+                nargs=-1,
+                type=float)
+def cli_regu_selection(
+        input: str,
+        output_dir: str,
+        delimiter: str,
+        shuffles: int,
+        progress: bool,
+        verbosity: str,
+        seed: int,
+        rank: int,
+        alpha: List[float],
+        l1_ratio: float,
+        max_iter: int,
+        beta_loss: str,
+        init: str,
+        scale: bool
+) -> None:
+    """Regularisation selection for NMF on ALPHA 9 fold bi-cross validation
+
+    Attempt to identify a suitable regularisation parameter alpha for
+    decomposition of input matrix X at a given rank with a given ratio
+    between L1 and L2 regularisation.
+    This is done by shuffling the matrix a number of times, and for each
+    shuffle diving it into 9 submatrices. Each of these nine is held out and
+    an estimate learnt from the remaining matrices, and the quality of the
+    estimated matrix used to identify a suitable alpha.
+
+    The underlying NMF implementation is from scikit-learn, and there is more
+    documentation available there for many of the NMF specific parameters there.
+
+    ALPHA is a list of values to be tested. 0.0 will always be added.
+    """
+
+    __configure_logger(verbosity)
+
+    # Validate parameters
+    alphas: List[float] = __alpha_values(alpha)
+    if len(alphas) < 2:
+        logging.fatal(("Must search 2 or more alphas; alphas provided were "
+                       "%s"), str(alphas))
+        return None
+
+    # Read input data
+    x: pd.DataFrame = pd.read_csv(input, delimiter=delimiter, index_col=0)
+    # Check reasonable dimensions
+    if x.shape[0] < 2 or x.shape[1] < 2:
+        logging.fatal("Loaded matrix invalid shape: (%s)", x.shape)
+        return
+    # TODO: Check all columns numeric
+
+    # Log params being used
+    param_str: str = (
+        f"Data Locations\n"
+        f"------------------------------\n"
+        f"Input:            {input}\n"
+        f"Output:           {output_dir}\n"
+        f""
+        f"Bi-cross validation parameters\n"
+        f"------------------------------\n"
+        f"Seed:             {seed}\n"
+        f"Rank:             {rank}\n"
+        f"Shuffles:         {shuffles}\n"
+        f"L1 Ratio:         {l1_ratio}\n"
+        f"Alphas:           {alphas}\n"
+        f"Max Iterations:   {max_iter}\n"
+        f"Beta Loss:        {beta_loss}\n"
+        f"Initialisation:   {init}\n"
+        f"Scale Regu:       {scale}"
+    )
+    logging.info(param_str)
+
+    # Perform rank selection
+    best_alpha: float
+    results: Dict[float, List[BicvResult]]
+    best_alpha, results = regu_selection(
+        x=x,
+        rank=rank,
+        shuffles=shuffles,
+        l1_ratio=l1_ratio,
+        alphas=alphas,
+        max_iter=max_iter,
+        beta_loss=beta_loss,
+        init=init,
+        progress_bar=progress,
+        scale_samples=scale
+    )
+
+    # Write output
+    regu_tbl: pd.DataFrame = BicvResult.results_to_table(results)
+    regu_plt: plotnine.ggplot = plot_regu_selection(results)
+    out_path: pathlib.Path = pathlib.Path(output_dir)
+    logging.info("Writing results to %s", str(out_path))
+    regu_tbl.to_csv(str(out_path / "regu_selection.tsv"), sep=delimiter)
+    regu_plt.save(out_path / "regu_selection.pdf")
+
+    # Completion
+    logging.info("Regularisation selection completed")
 
 def decompositions(
         x: pd.DataFrame,
@@ -3904,6 +4105,15 @@ def __validate_input_matrix(x: pd.DataFrame) -> None:
     if x.isna().any().any():
         logging.fatal("Loaded matrix contains NaN/NA values")
         raise ValueError("Loaded matrix contains NaN/NA values")
+
+
+def __alpha_values(alphas: Optional[List[float]]) -> List[float]:
+    """Return default alpha value to search if alphas is None."""
+    alpha_list: List[float] = [] if alphas is None else list(sorted(alphas))
+    if alphas is None or len(alpha_list) == 0:
+        logging.info("Using default range of alphas values")
+        return DEF_ALPHAS
+    return alpha_list
 
 
 def _wisconsin_double_standardise(h: pd.DataFrame) -> pd.DataFrame:

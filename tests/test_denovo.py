@@ -15,7 +15,7 @@ from cvanmf import models
 from cvanmf.denovo import BicvSplit, BicvFold, bicv, _cosine_similarity, \
     rank_selection, BicvResult, plot_rank_selection, decompose, NMFParameters, \
     decompositions, Decomposition, cli_rank_selection, regu_selection, \
-    plot_regu_selection
+    plot_regu_selection, cli_regu_selection
 from cvanmf.reapply import match_identical
 
 
@@ -704,6 +704,35 @@ def test_cli_rank_selection(
         "CLI rank selection did had non-zero exit code"
     td_path: pathlib.Path = pathlib.Path(td)
     for expected_file in ['rank_selection.tsv', 'rank_selection.pdf']:
+        assert (td_path / expected_file).is_file(), \
+            f"{expected_file} not created"
+
+
+def test_cli_regu_selection(
+        small_overlap_blocks: pd.DataFrame,
+        tmp_path: pathlib.Path
+):
+    """Run the CLI command for rank selection."""
+    # Write our block data to the temp path
+    small_overlap_blocks.to_csv(tmp_path / "input.tsv", sep="\t")
+    runner: CliRunner = CliRunner()
+    with runner.isolated_filesystem(temp_dir=tmp_path) as td:
+        result = runner.invoke(cli_regu_selection,
+                               [
+                                   "--input", tmp_path / "input.tsv",
+                                   "-o", td,
+                                   "-d", "\t",
+                                   "--shuffles", "5",
+                                   "--no-progress",
+                                   "--seed", "4928",
+                                   "--rank", "3",
+                                   "--log_info"
+                               ]
+                               )
+    assert result.exit_code == 0, \
+        "CLI rank selection had non-zero exit code"
+    td_path: pathlib.Path = pathlib.Path(td)
+    for expected_file in ['regu_selection.tsv', 'regu_selection.pdf']:
         assert (td_path / expected_file).is_file(), \
             f"{expected_file} not created"
 
