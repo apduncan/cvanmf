@@ -3432,6 +3432,10 @@ class Decomposition:
             boxplot_params: Optional[Dict] = None,
             point_params: Optional[Dict] = None,
             disc_rotate_labels: Optional[float] = None,
+            show_significance: bool = True,
+            significance_formatter: Optional[Callable[[float, float, float],
+            str]] = None,
+            univariate_test_params: Dict[str, Any] = None
     ) -> Tuple[plotnine.ggplot, plotnine.ggplot]:
         """Plot relative signature weight against metadata.
         
@@ -3440,6 +3444,12 @@ class Decomposition:
         continuous metadata. Will infer which type each column is. To use an
         integer as categorical, convert it to Categorical type in pandas.
 
+        :param univariate_test_params: Parameters passed to
+            :meth:`univariate_tests`
+        :param significance_formatter: Function which takes the p-value and
+            adjusted p-values and returns a string to use as label.
+        :param show_significance: Add significance to each subplot for discrete
+            metadata.
         :param metadata: Dataframe with samples on rows, and metadata on
             columns.
         :param continuous_fn: Function to determine if a column is
@@ -3525,8 +3535,99 @@ class Decomposition:
                     color=plotnine.guide_legend(title="Signature")) +
                 self.color_scale
         )
+        if show_significance:
+            disc_plot = self.__attach_significance(
+                disc_plot,
+                significance_formatter=significance_formatter,
+                univar_params=univariate_test_params
+            )
 
         return disc_plot, cont_plot
+
+    def __attach_significance(
+            self,
+            plt_metadata: plotnine.ggplot,
+            significance_formatter: Callable[[float, float, float], str],
+            univar_params: Dict[str, Any]
+    ) -> plotnine.ggplot:
+        """Attach results of univariate testing to metadata plots."""
+
+        significance_formatter = (
+            Decomposition.significance_format
+            if significance_formatter is None else
+            significance_formatter
+        )
+        # Recover metadata in format we need
+        df: pd.DataFrame = plt_metadata.data.pivot_table(
+            columns="metadata_field", index="sample",
+            values="metadata_value", aggfunc=np.min
+        )
+
+        univar_res: pd.DataFrame = self.univariate_tests(
+            metadata=df,
+            **({} if univar_params is None else univar_params)
+        )
+
+        # Need to calculate where to place the label on the x and y axes, as
+        # sadly we can't just say middle and top a bit
+        xpos: pd.DataFrame = (df.nunique() / 2) + 0.5
+        ypos: pd.DataFrame = (
+            plt_metadata.data[['signature', 'signature_weight']]
+            .groupby("signature")
+            .max()
+        )
+        ypos_const: float = ypos.max().iloc[0] * 1.1
+        label_df: pd.DataFrame = (
+            univar_res.merge(
+                right=xpos.to_frame("x"),
+                right_index=True,
+                left_on="md",
+                how="left"
+            )
+        ).assign(y=ypos_const)
+        label_df['label_str'] = [
+            significance_formatter(*tuple(x)) for _, x in
+            label_df[['p', 'local_adj_p', 'global_adj_p']].iterrows()
+        ]
+        # Need to match columns to facet fields
+        label_df = label_df.rename(columns=dict(md="metadata_field"))
+
+        # Add a text layer
+        plt_metadata = (
+            plt_metadata +
+            plotnine.geom_text(
+                data=label_df,
+                mapping=plotnine.aes(
+                    x="x",
+                    y="y",
+                    label="label_str"
+                )
+            ) +
+            plotnine.scale_y_continuous(expand=(0, 0, 0.1, 0))
+        )
+        return plt_metadata
+
+    @staticmethod
+    def significance_format(p, local_adj, global_adj) -> str:
+        """"Convert p-values from unvariate tests to display strings.
+        
+        By default, this will use the following strategy:
+        global_adj =< 0.01 = ***
+        global_adj =< 0.05 = **
+        global_adj =< 0.1  = *
+        p =< 0.01 = ..
+        p =< 0.05 = .
+        """
+        qc: List[Tuple[float, str]] = [(0.01, "***"), (0.05, "**"), (0.1, "*")]
+        pc: List[Tuple[float, str]] = [(0.01, ".."), (0.05, '.')]
+        for thresh, val in qc:
+            if global_adj <= thresh:
+                return val
+        for thresh, val in pc:
+            if p <= thresh:
+                return val
+        return ""
+
 
     def save(self,
              out_dir: Union[str, pathlib.Path],
