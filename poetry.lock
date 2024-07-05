@@ -1741,6 +1741,25 @@ files = [
 ]
 
 [[package]]
+name = "kneed"
+version = "0.8.5"
+description = "Knee-point detection in Python"
+optional = false
+python-versions = ">=3.5"
+files = [
+    {file = "kneed-0.8.5-py3-none-any.whl", hash = "sha256:2f3fbd4e9bd808e65052841448702c41ea64d5fc78735cbfc97ab25f08bd9815"},
+    {file = "kneed-0.8.5.tar.gz", hash = "sha256:a4847ac4f1d04852fea278d5de7aa8bfdc3beb7fbca4a182fec0f0efee43f4b1"},
+]
+
+[package.dependencies]
+numpy = ">=1.14.2"
+scipy = ">=1.0.0"
+
+[package.extras]
+plot = ["matplotlib (>=2.2.5)"]
+testing = ["matplotlib (>=2.2.5)", "pytest (>=5.0.1)", "pytest-cov (>=3.0.0)"]
+
+[[package]]
 name = "markdown-it-py"
 version = "3.0.0"
 description = "Python port of markdown-it. Markdown parsing, done right!"
@@ -3972,4 +3991,4 @@ testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "p
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.10"
-content-hash = "370267ec545405ba5d278e9f5e872a7be5b9469254aa486d0ce4fc5313c8a9da"
+content-hash = "9efb71ac25fa7a5a232e768fa2eb3df444998d365d0707e18463a7ecb9177cf1"

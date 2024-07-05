@@ -15,7 +15,7 @@ from cvanmf import models
 from cvanmf.denovo import BicvSplit, BicvFold, bicv, _cosine_similarity, \
     rank_selection, BicvResult, plot_rank_selection, decompose, NMFParameters, \
     decompositions, Decomposition, cli_rank_selection, regu_selection, \
-    plot_regu_selection, cli_regu_selection
+    plot_regu_selection, cli_regu_selection, suggest_rank
 from cvanmf.reapply import match_identical
 
 
@@ -920,3 +920,10 @@ def test_name_signatures_by_weight(
     small_decomposition.name_signatures_by_weight(
         max_char_length=20, max_num_features=1
     )
+
+
+def test_suggest_rank(
+        small_rank_selection
+):
+    res: Dict[str, float] = suggest_rank(small_rank_selection)
+    foo = 'ar'

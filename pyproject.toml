@@ -17,6 +17,7 @@ patchworklib = "^0.6.3"
 pyyaml = "^6.0.1"
 setuptools = "^69.1.1"
 scikit-bio = "^0.6.0"
+kneed = "^0.8.5"
 
 [tool.poetry.dev-dependencies]
 

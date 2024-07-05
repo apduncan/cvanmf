@@ -46,6 +46,7 @@ import patchworklib
 import patchworklib as pw
 import plotnine
 import yaml
+from kneed import KneeLocator
 from scipy.spatial.distance import pdist, squareform
 from skbio import OrdinationResults
 from sklearn import manifold
@@ -807,18 +808,80 @@ def rank_selection(x: pd.DataFrame,
     return grouped_results
 
 
+def suggest_rank(
+        rank_selection_results: Union[Dict[int, List[BicvResult]],
+        pd.DataFrame],
+        summarise: Callable[[np.ndarray], float] = np.mean,
+        **kwargs
+) -> Dict[str, int]:
+    """Suggest a suitable rank.
+
+    Attempt to identify and elbow point in the graphs of cosine similarity
+    and :math:`R^2` which represent points where the rate of improvement in
+    the decomposition slows.
+
+    Please note this is only a suggestion of a suitable rank; the plots
+    should still be inspected and decompositions of candidate ranks inspected to
+    make a final decision.
+
+    This is implemented using the excellent `kneed` package, and `**kwargs`
+    are passed to the constructor of `KneeLocator`, you can use this if you
+    wish to customise the behaviour.
+
+    :param rank_selection_results: Results from :func:`rank_selection`, or
+    these results in DataFrame format from :meth:`BicvResult.results_to_table`
+    :param summarise: Function to summarise results from a shuffle
+    :param kwargs: Arguments passed to `KneeLocator` constructor
+    """
+    df: pd.DataFrame = (
+        rank_selection_results if isinstance(rank_selection_results,
+                                             pd.DataFrame)
+        else BicvResult.results_to_table(
+            rank_selection_results, summarise=summarise, **kwargs)
+    )
+    return (
+        df[['rank', 'cosine_similarity', 'r_squared']]
+        .groupby('rank')
+        .median()
+        .apply(__detect_elbow, **kwargs)
+        .to_dict()
+    )
+
+
+def __detect_elbow(
+        series: pd.Series,
+        concave: bool = True,
+        increasing: bool = True,
+        **kwargs
+) -> float:
+    """Return estimated elbow point in a series of values using the package
+    kneed."""
+    direction: str = 'increasing' if increasing else 'decreasing'
+    curve: str ='concave' if concave else 'convex'
+    locator: KneeLocator = KneeLocator(
+        x=series.index,
+        y=series.values,
+        direction=direction,
+        curve=curve,
+        **kwargs
+    )
+    return locator.knee
+
+
 def plot_rank_selection(results: Dict[Union[int, float], List[BicvResult]],
                         exclude: Optional[Iterable[str]] = None,
                         include: Optional[Iterable[str]] = None,
                         show_all: bool = False,
                         geom: str = 'box',
                         summarise: Literal['mean', 'median'] = 'mean',
+                        suggested_rank: bool = True,
                         jitter: bool = None,
                         jitter_size: float = 0.3,
                         n_col: int = None,
                         xaxis: str = "rank",
                         rotate_x_labels: Optional[float] = None,
-                        geom_params: Dict[str, Any] = None
+                        geom_params: Dict[str, Any] = None,
+                        **kwargs
                         ) -> plotnine.ggplot:
     """Plot rank selection results from bi-cross validation.
 
@@ -839,6 +902,7 @@ def plot_rank_selection(results: Dict[Union[int, float], List[BicvResult]],
     :param geom: Type of plot to draw. Accepts either 'box' or 'violin'
     :param summarise: How to summarise the statistics across the folds
         of a given shuffle.
+    :param suggested_rank: Estimate rank using :func:`suggest_rank`.
     :param jitter: Draw individual points for each shuffle above the main plot.
     :param jitter_size: Size of jitter points.
     :param n_col: Number of columns in the plot. If blank, attempts to guess
@@ -847,6 +911,7 @@ def plot_rank_selection(results: Dict[Union[int, float], List[BicvResult]],
         "alpha" for regularisation selection.
     :param rotate_x_labels: Degrees to rotate x-axis labels by. If None
         will rotate if x-axis is float.
+    :param **kwargs: Passed to :func:`suggest_ranks`.
     :return: :class:`plotnine.ggplot` instance
     """
     # Intended as a user friendly interface to plot rank selection results
@@ -885,9 +950,9 @@ def plot_rank_selection(results: Dict[Union[int, float], List[BicvResult]],
     # Add the xaxis (could be rank or alpha)
     measures = list(measures.union({xaxis}))
     # Get results and stack so measure is a column
-    df: pd.DataFrame = (
-        BicvResult.results_to_table(results, summarise=summarise_fn)[measures]
-    )
+    full_df: pd.DataFrame = BicvResult.results_to_table(
+        results, summarise=summarise_fn)
+    df: pd.DataFrame = full_df[measures]
     # Make longer so we have measure as a column
     stacked: pd.DataFrame = (
         df
@@ -926,6 +991,33 @@ def plot_rank_selection(results: Dict[Union[int, float], List[BicvResult]],
             + plotnine.ylab("Value")
             + plotnine.scale_fill_discrete(guide=False)
     )
+
+    # Add automated rank suggestion
+    if xaxis =="rank" and suggested_rank == True:
+        suggested: Dict[str, int] = suggest_rank(full_df, **kwargs)
+        suggested_df: pd.DataFrame = (
+            pd.Series(suggested)
+            .to_frame('rank')
+            .reset_index(names='measure')
+        )
+        suggested_df = suggested_df.loc[suggested_df['measure'].isin(measures)]
+        # Determine the x-position of the selected rank, as the line gets
+        # plotted at position n along the axis
+        ranks_ordered: List[int] = sorted(df['rank'].unique())
+        suggested_df['rank_pos'] = suggested_df['rank'].apply(
+            ranks_ordered.index) + 1
+
+        plot = (
+            plot
+            + plotnine.geom_vline(
+                data=suggested_df,
+                mapping=plotnine.aes(xintercept="rank_pos"),
+                linetype="dashed",
+                color="black",
+                alpha=.75,
+                size=1
+            )
+        )
 
     # Determine whether the xaxis values are floats, and so axis labels should
     # be rounded for display
