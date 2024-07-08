@@ -1173,27 +1173,53 @@ def regu_selection(x: pd.DataFrame,
                        "some rank selection iterations may have failed."))
     # Determine the selected regularisation parameter based on criteria from
     # the Enterosignatures paper
+    best_a: float = suggest_alpha(grouped_results)
+
+    return (best_a, grouped_results)
+
+
+def suggest_alpha(regu_results: Dict[float, List[BicvResult]]) -> float:
+    """Suggest a suitable value for alpha.
+
+    Want to select the largest value of alpha possible which does not
+    detrimentally effect the quality of the decomposition. To gauge this,
+    we adopt the heuristic of [REF], selecting the highest value of alpha
+    for which the mean R^2 is not lower than the (mean R^2 + standard
+    deviation) at alpha=0.
+
+    This is called by default in :func:`regu_selection`. It is provided as
+    public method as the Nextflow pipeline splits the Bicv process, and
+    doesn't use :func:`regu_selection`, and so it can be called after.
+
+    :param regu_results: Dictionary with keys being alpha values, and values
+    a list of :class:`BicvResult` objects.
+    """
+    # Give a nicer error if 0.0 is not included
+    if 0.0 not in regu_results:
+        raise ValueError(
+            "Results must include alpha=0.0 in order to suggest rank")
     # Calculate MEV at alpha=0.0 and SD of mean
     # Selected alpha whose MEV is greater than threshold
     mean_rsq: Dict[float, float] = {
         alpha: np.concatenate([x.r_squared for x in res]).mean()
-        for alpha, res in grouped_results.items()
+        for alpha, res in regu_results.items()
     }
     sd_zero: float = np.std(
         np.concatenate(
-            [x.r_squared for x in grouped_results[0.0]]
+            [x.r_squared for x in regu_results[0.0]]
         )
     )
     threshold: float = mean_rsq[0.0] - sd_zero
     # TODO: Make this more elegant.
     # This works for now though
+    alpha_list: List[float] = list(regu_results.keys())
     best_a: float = sorted(alpha_list)[0]
     for a in sorted(alpha_list[1:]):
         if mean_rsq[a] < threshold:
             break
         best_a = a
+    return best_a
 
-    return (best_a, grouped_results)
 
 
 def plot_regu_selection(
