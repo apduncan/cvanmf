@@ -438,6 +438,19 @@ def test_plot_rank_selection(
     assert pth.exists(), "Plot file not created"
     assert pth.stat().st_size > 0, "Plot file is empty"
 
+    # Ensure elbow detection fails gracefully
+    # Remove anything above correct rank to eliminate elbow
+    res_no_elbow: Dict[int, List[BicvResult]] = {
+        rank: res for rank, res in small_rank_selection.items()
+        if rank < 4
+    }
+    plt = plot_rank_selection(res_no_elbow, exclude=None, geom="box")
+    pth = (tmp_path / "test_rank_sel_no_elbow.png")
+    plt.save(pth)
+    # Test that the file exists and isn't empty
+    assert pth.exists(), "Plot file not created"
+    assert pth.stat().st_size > 0, "Plot file is empty"
+
 
 def test_plot_regu_selection(
         tmp_path: pathlib.Path,
