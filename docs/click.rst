@@ -2,11 +2,15 @@
 Command Line
 ============
 .. click:: cvanmf.reapply:cli
-    :prog: es_fit
+    :prog: reapply
     :nested: full
 
 .. click:: cvanmf.denovo:cli_rank_selection
     :prog: rank_select
+    :nested: full
+
+.. click:: cvanmf.denovo:cli_regu_selection
+    :prog: regu_select
     :nested: full
 
 .. click:: cvanmf.denovo:cli_decompose
