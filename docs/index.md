@@ -5,6 +5,7 @@
 :maxdepth: 1
 :hidden:
 
+install.md
 example.ipynb
 autoapi/index
 click.rst
