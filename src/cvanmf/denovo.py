@@ -1005,7 +1005,8 @@ def plot_rank_selection(results: Dict[Union[int, float], List[BicvResult]],
         # plotted at position n along the axis
         ranks_ordered: List[int] = sorted(df['rank'].unique())
         suggested_df['rank_pos'] = suggested_df['rank'].apply(
-            lambda x: np.nan if x is None else ranks_ordered.index(x) + 1)
+            lambda x: (np.nan if x is None or np.isnan(x) else
+                       ranks_ordered.index(x) + 1))
 
         plot = (
             plot
