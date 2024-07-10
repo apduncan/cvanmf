@@ -56,3 +56,9 @@ exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 # a list of builtin themes.
 #
 html_theme = "furo"
+
+# Parser extension for myst (notebook parsing), I'm using this to enable math
+myst_enable_extensions = [
+    "amsmath",
+    "dollarmath"
+]
