@@ -149,7 +149,7 @@ profiles {
         // Everything in the process block will apply to all processes run 
         // by Nextflow
         process {
-            conda = 'env.yaml'
+            conda = "${projectDir}/env.yaml"
             // By default, jobs will be submitted to the queue 'ei-short'
             queue = 'ei-short'
             // We'll request 1.5GB and 4 CPUs by default
