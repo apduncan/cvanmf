@@ -7,6 +7,7 @@
 
 install.md
 example.ipynb
+nextflow.md
 autoapi/index
 click.rst
 changelog.md

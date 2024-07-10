@@ -33,23 +33,31 @@ Try 'rank_select --help' for help.
 Error: Missing option '-i' / '--input'.
 ```
 
+## Updating
+
+To update to a new version of `cvanmf`, with your environment active, run
+
+```commandline
+pip --force-reinstall --upgrade git+https://github.com/apduncan/cvanmf.git
+```
+
+While the package isn't properly released yet, I'm not always bumping the 
+version number for new features etc, so `--force-reinstall` will mean the 
+package gets reinstalled even if the version number has remained the same.
+
 ## Additional installation: Jupyter
 Many examples in this documentation are written as Jupyter notebooks, and 
 this can be a convenient way to use the package. For an introduction to 
-Jupyter see here.
+Jupyter Lab [see here](https://jupyterlab.readthedocs.io/en/stable/index.html).
 
-To install Jupyter
+To install Jupyter Lab
 
 ```commandline
-mamba install --name cvanmf jupyter
+mamba install --name cvanmf jupyterlab
 ```
 
-When installed, to launch Jupyer lab, with the `cvanmf` environment active, run
+When installed, to launch Jupyter lab, with the `cvanmf` environment active, run
 
 ```
 jupyter lab
 ```
-
-## Additional installation: Nextflow pipeline
-
-Todo Nextflow docs.
