@@ -1,7 +1,7 @@
 # Nextflow execution
 
 Some inputs may be too large to run a desktop computer, and would be better 
-run on a HPC or cloud compute environment. We provide a Nextflow pipeline 
+run on an HPC or cloud compute environment. We provide a Nextflow pipeline 
 for running in these environments.
 
 Introductions and more advanced training on Nextflow are available from 
@@ -93,7 +93,7 @@ You can read more about caching and resuming in Nextflow
 
 ## Customising configuration files
 
-Currently some of [pipeline parameters](#parameter-list) are not easily 
+Currently some of the [pipeline parameters](#parameter-list) are not easily 
 passed at the command line; primarily those which are lists of values, such 
 a `regu_rank`. If you want to customise these, you can create a custom 
 configuration file.
@@ -133,8 +133,9 @@ use SLURM, but [many other schedulers are supported by Nextflow](https://www.nex
 
 We can make a custom config file which will contain the setting needed for 
 SLURM. Here, we are going to configure a SLURM cluster, on which we use 
-`micromamba` to manage environments. Make the file `slurm.config` with the 
-contents
+`micromamba` to manage environments (see 
+[the micromamba section](#micromamba-troubleshooting) for some 
+troubleshooting with micromamba). Make the file `slurm.config` with the contents
 
 ```
 profiles {
@@ -221,7 +222,7 @@ these small tasks.
 
 It's good practice to avoid requesting too much memory for each job. When 
 first running a new dataset, you can get a good report of resource usage by 
-running with Nextflow's `--with-report` option 
+running with Nextflow's `-with-report` option 
 ([documented here](https://www.nextflow.io/docs/latest/tracing.html#execution-report)).
 
 A sensible step could be to run for a single rank and a small number of 
@@ -285,6 +286,33 @@ nextflow run apduncan/enteroflow -r main -c slurm.config -profile slurm \
 --matrix sample.tsv --ranks 2,10 --publish_dir output/sample --seed 4298
 ```
 
+## micromamba troubleshooting
+
+When using `micromamba` to manage environments, I have occasionally run into 
+issues Nextflow being unable to activate the environment, getting errors 
+like
+
+```
+[...]
+Command wrapper:
+  /var/spool/slurmd/job1304257/slurm_script: line 325: conda: command not found
+  /var/spool/slurmd/job1304257/slurm_script: line 325: /bin/activate: No such file or directory
+[...]
+```
+
+In this case setting the `conda.cacheDir` directive in the config file 
+resolved the problem. Add this to the profile in your config
+
+```
+profiles {
+    slurm {
+        ...
+        conda.enabled = true
+        conda.useMicromamba = true
+        conda.cacheDir = '/some/path/mambaforge/envs
+        ...
+```
+
 ## Parameter list
 
 ### Shared by all steps
@@ -308,7 +336,7 @@ nextflow run apduncan/enteroflow -r main -c slurm.config -profile slurm \
 
 
 ### Rank selection
-* `ranks`: The lowest and highest rank to be search, inclusive, as a comma 
+* `ranks`: The lowest and highest rank to be searched, inclusive, as a comma 
   separated string. Defaults to "2,20".
 
 ### Regularisation selection
