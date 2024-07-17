@@ -309,7 +309,7 @@ profiles {
         ...
         conda.enabled = true
         conda.useMicromamba = true
-        conda.cacheDir = '/some/path/mambaforge/envs
+        conda.cacheDir = '/some/path/mambaforge/envs'
         ...
 ```
 

@@ -2048,6 +2048,17 @@ class Decomposition:
     (https://sashamaps.net/docs/resources/20-colors/)
     """
 
+    DEF_PLOT_SAMPLE_LIMIT: int = 250
+    """When there are more than this many samples, the default save method
+    will not produced plots which have points for each sample."""
+
+    DEF_PLOT_SAMPLE_LIMIT_REMOVE: Set[str] = {
+        "plot_relative_weight", "plot_pcoa", "plot_modelfit_point"
+    }
+    """The plots to ignore when there are more than DEF_PLOT_SAMPLE_LIMIT 
+    samples."""
+
+
     LOAD_FILES: List[str] = ['x.tsv', 'h.tsv', 'w.tsv', 'parameters.yaml',
                              'properties.yaml']
     """Defines the files while are loaded to recreate a decomposition object
@@ -3663,7 +3674,7 @@ class Decomposition:
              x_path: Optional[pathlib.Path] = None,
              symlink: bool = True,
              delim: str = "\t",
-             suppress_plots: bool = False) -> None:
+             plots: Optional[Union[bool, Iterable[str]]] = None) -> None:
         """Write decomposition to disk.
 
         Export this decomposition and associated data. This is written to text
@@ -3681,8 +3692,14 @@ class Decomposition:
             symlinks.
         :param symlink: Make symlinks ot param_path and x_path if possible.
         :param delim: Delimiter to used for tabular output.
-        :param suppress_plots: Do not create plots for output. Saves time on
-            decompositions with a very large number of samples."""
+        :param plots: Determine which plots to write. When left default
+        (None) this will produce all plots if there are 500 or fewer samples.
+        If True, all plots will produced; if False no plots will be produced.
+        If a list is provided, any plots named in the list will be produced,
+        i.e. if given ['pcoa', 'modelfit', 'radar'], plots from
+        :meth:`plot_pcoa` and : meth:`plot_modelfit` would be produced.
+        'radar' would be ignored as there is no `plot_radar` method.
+        ."""
 
         out_dir = pathlib.Path(out_dir)
         logging.debug("Create decomposition output dir: %s", out_dir)
@@ -3732,10 +3749,10 @@ class Decomposition:
                        save_fn=self.parameters.to_yaml,
                        symlink=symlink)
 
+        # Determine which plots to produce
+
         # Attempt to output default plots
-        for plot_fn in (x for x in dir(self) if "plot_" in x):
-            if suppress_plots:
-                break
+        for plot_fn in self.__plots_to_save(plot=plots):
             plt_path: pathlib.Path = out_dir / plot_fn
             logging.debug("Write decomposition plot: %s", plt_path)
             if plot_fn == "plot_metadata":
@@ -3766,6 +3783,34 @@ class Decomposition:
                         tar.add(f, arcname=f.name)
             shutil.rmtree(out_dir)
 
+    def __plots_to_save(
+            self, plot: Optional[Union[bool, Iterable[str]]]) -> Set[str]:
+        """Determine which plotting functions to attempt when saving a
+        decomposition.
+
+        :param plot: bool (all/nothing), list of plots, or None for default.
+        :return: List of plot function names to call
+        """
+
+        all_plots: Set[str] = set(x for x in dir(self) if "plot_" in x)
+        if isinstance(plot, bool):
+            return all_plots if plot else {}
+        if plot is not None:
+            return all_plots.intersection(set(f'plot_{x}' for x in plot))
+        # Default behaviour is to not make plots with all samples in the
+        # case that there are lot of samples
+        if self.h.shape[1] > self.DEF_PLOT_SAMPLE_LIMIT:
+            logging.warning(
+                ("More than %s samples; will not save plots with points for "
+                 "each sample by default (%s). To force these plots to be "
+                 "saved, pass plot=True to save()."),
+                self.DEF_PLOT_SAMPLE_LIMIT,
+                self.DEF_PLOT_SAMPLE_LIMIT_REMOVE
+            )
+            return all_plots.difference(self.DEF_PLOT_SAMPLE_LIMIT_REMOVE)
+        return all_plots
+
+
     @staticmethod
     def save_decompositions(decompositions: Dict[int, List[Decomposition]],
                             output_dir: pathlib.Path,
@@ -3792,6 +3837,7 @@ class Decomposition:
         :param symlink: Symlink the parameters and input X files.
         :param delim: Delimiter for tabular output.
         :param compress: Compress each decomposition folder to .tar.gz
+        :param **kwargs: Passed to :meth:`Decomposition.save`
         """
         output_dir.mkdir(parents=True, exist_ok=True)
         # Ensure this is empty

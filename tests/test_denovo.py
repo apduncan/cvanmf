@@ -772,6 +772,39 @@ def test_save(small_decomposition: Decomposition,
             f"File {expected_file} is empty (st_size <= 0)"
     # TODO: Tests for symlinking properly etc.
 
+    # Test suppressing plots
+    odir_noplot: pathlib.Path = tmp_path / "test_save_noplot"
+    small_decomposition.save(
+        out_dir=odir_noplot,
+        plots=False
+    )
+    for expected_file in [
+        "h.tsv", "h_scaled.tsv", "model_fit.tsv", "monodominant_samples.tsv",
+        "primary_signature.tsv", "quality_series.tsv",
+        "representative_signatures.tsv", "w.tsv", "w_scaled.tsv", "x.tsv"]:
+        assert (odir / expected_file).is_file(), \
+            f"Expected file {expected_file} not created"
+        assert (odir / expected_file).stat().st_size > 0, \
+            f"File {expected_file} is empty (st_size <= 0)"
+
+    # Test only selecting specific plots
+    # Test suppressing plots
+    odir_specific: pathlib.Path = tmp_path / "test_save_specific"
+    small_decomposition.save(
+        out_dir=odir_specific,
+        plots=["feature_weight", "pcoa"]
+    )
+    for expected_file in ["plot_feature_weight.pdf", "plot_pcoa.pdf"]:
+        assert (odir / expected_file).is_file(), \
+            f"Expected file {expected_file} not created"
+        assert (odir / expected_file).stat().st_size > 0, \
+            f"File {expected_file} is empty (st_size <= 0)"
+    # Determine that there are no undesired pdfs
+    for f in odir_specific.glob("*.pdf"):
+        assert str(f.name) in [
+            "plot_feature_weight.pdf", "plot_pcoa.pdf"], \
+        f"Unexpected plot {f} produced"
+
 
 def test_quality_series(small_decomposition):
     """Are the properties of a decomposition being produced as a series
