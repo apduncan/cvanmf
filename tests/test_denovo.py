@@ -83,10 +83,10 @@ def small_bicv_result(
 ) -> BicvResult:
     """BiCV run on a single shuffled matrix."""
     df: pd.DataFrame = small_overlap_blocks
-    shuffles: List[BicvSplit] = BicvSplit.from_matrix(
+    shuffles: Iterable[BicvSplit] = BicvSplit.from_matrix(
         df=df, n=1, random_state=4298)
 
-    return bicv(x=shuffles[0], rank=4, seed=99, keep_mats=False)
+    return bicv(x=next(shuffles), rank=4, seed=99, keep_mats=False)
 
 
 @pytest.fixture
@@ -188,9 +188,9 @@ def are_decompositions_close(a: Dict[int, List[Decomposition]],
 def test_bicv_split(small_overlap_blocks):
     """Shuffling and splitting working as intended?"""
     df: pd.DataFrame = small_overlap_blocks
-    shuffles: List[BicvSplit] = BicvSplit.from_matrix(
+    shuffles: List[BicvSplit] = list(BicvSplit.from_matrix(
         df=df, n=2, random_state=4298
-    )
+    ))
 
     # Overall number of entries in matrix is consistent
     shuf_len: int = shuffles[0].size
@@ -246,9 +246,9 @@ def test_bicv_split(small_overlap_blocks):
 def test_bicv_folds(small_overlap_blocks):
     """Are folds be made from submatrices correctly?"""
     df: pd.DataFrame = small_overlap_blocks
-    shuffle: BicvSplit = BicvSplit.from_matrix(
+    shuffle: BicvSplit = list(BicvSplit.from_matrix(
         df=df, n=1, random_state=4298
-    )[0]
+    ))[0]
     folds: List[BicvFold] = [shuffle.fold(i) for i in range(9)]
 
     def fold_sum(fold) -> float:
@@ -289,9 +289,9 @@ def test_bicv_split_io(
     """Test BicvSplit I/O"""
 
     df: pd.DataFrame = small_overlap_blocks
-    shuffles: List[BicvSplit] = BicvSplit.from_matrix(
+    shuffles: List[BicvSplit] = list(BicvSplit.from_matrix(
         df=df, n=2, random_state=4298
-    )
+    ))
 
     # Basic operations
     # Save single shuffle
@@ -318,8 +318,9 @@ def test_bicv_split_io(
     assert all(np.isclose(shuffle_0.x.values, shuffles[0].x.values).ravel()), \
         "Loaded object is not equivalent to source object"
     # Load multiple
-    shuffles_loaded: List[BicvSplit] = BicvSplit.load_all_npz(tmp_path,
-                                                              fix_i=True)
+    shuffles_loaded: List[BicvSplit] = list(
+        BicvSplit.load_all_npz(tmp_path, fix_i=True)
+    )
     # Should be equal to shuffles
     assert all(
         np.array_equal(a.x.values, b.x.values)
@@ -329,11 +330,10 @@ def test_bicv_split_io(
 
     # Non-unique values of i
     shuffles[0].i = shuffles[1].i
-    with pytest.raises(ValueError):
-        BicvSplit.save_all_npz(shuffles, tmp_path, force=True)
     # fix_i should renumber
     BicvSplit.save_all_npz(shuffles, tmp_path, force=True, fix_i=True)
-    unique_i: Set[Optional[int]] = set(x.i for x in shuffles)
+    reloaded: List[BicvSplit] = list(BicvSplit.load_all_npz(tmp_path))
+    unique_i: Set[Optional[int]] = set(x.i for x in reloaded)
     assert len(unique_i) == len(shuffles)
 
 
@@ -374,6 +374,10 @@ def test__cosine_similarity(small_decomposition: Decomposition):
 def test_rank_selection(small_rank_selection: Dict[int, List[BicvResult]]):
     """Test output a small rank selection run. Rank selection is actually
     run in a fixture, so result can be cached and reused between tests."""
+    # There should be results for ranks 2 to 6
+    rank_set: Set[int] = set(small_rank_selection.keys())
+    assert rank_set == set(range(2, 7)), \
+        "Missing results for some ranks which should be tested."
     # Same number of results for each rank
     res_num: List[int] = [len(x) for x in small_rank_selection.values()]
     assert all(x == res_num[0] for x in res_num[1:]), \
@@ -391,6 +395,15 @@ def test_regu_selection(
     selection is actually run in a fixture, so result can be shared between
     tests."""
     est, res = small_regu_selection
+
+    # There should be results for the standard alpha values
+    alpha_set: Set[int] = set(res.keys())
+    alpha_expected: Set[float] = set(
+        [0] + [2 ** i for i in range(-5, 2)]
+    )
+    assert len(alpha_set) == len(alpha_expected), \
+        "Missing results for some alphas which should be tested."
+
     res_num: List[int] = [len(x) for x in res.values()]
     assert all(x == res_num[0] for x in res_num[1:]), \
         ("Different numbers of results for some ranks."

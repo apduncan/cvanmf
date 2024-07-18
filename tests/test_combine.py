@@ -197,231 +197,231 @@ def test_match_signatures():
     )
 
 
-def test_combine_signatures():
-    # Temp dev testing
-    # Combine signatures with themselves
-    # combine_signatures([models.five_es(), models.five_es()])
-    dupd: pd.DataFrame = models.five_es().w
-    dupd.loc[:, "Dupd_1"] = dupd.iloc[:, 0]
-    dupd.loc[:, "Merg_1"] = dupd.iloc[:, 0] + dupd.iloc[:, 1]
-    dupd.loc[:, "Rand_1"] = np.random.uniform(size=(dupd.shape[0], 1))
-    dupd.loc[:, "Merg_2"] = dupd.iloc[:, 1] + 4 * dupd.iloc[:, 4]
-    combine_signatures([models.five_es(), dupd])
-
-
-def test_experiment():
-    # Temp function - see how splitting the DRAMA data goes
-    es_x = pd.read_csv(
-        (
-            "https://gitlab.inria.fr/cfrioux/enterosignature-paper/-/raw/main/data/"
-            "GMR_dataset/GMR_genus_level_abundance_normalised.tsv?ref_type=heads"),
-        sep="\t").iloc[:, :]
-    cohorts_arr = np.random.randint(low=0, high=20, size=(es_x.shape[1]))
-    cohorts = []
-    for i in set(cohorts_arr):
-        cohorts.append(es_x.iloc[:, cohorts_arr == i])
-    mmodels = [decompositions(x,
-                              ranks=[8],
-                              random_starts=100,
-                              top_n=1
-                              )[8][0] for x in cohorts]
-    combi = combine_signatures(mmodels, x=es_x, low_support_threshold=0.25)
-    matched = match_signatures(combi, models.five_es().w)
-    from cvanmf.reapply import _reapply_model
-    from cvanmf.reapply import match_identical
-    combi_model_fit = _reapply_model(y=es_x,
-                                     w=combi,
-                                     colors=None,
-                                     input_validation=lambda x: x,
-                                     feature_match=match_identical)
-    orig_model_fit = models.five_es().reapply(es_x)
-    print(matched)
-
-
-def test_experiment2(complex_cohort_structure: List[pd.DataFrame]):
-    # Temp function - see how splitting the DRAMA data goes
-    x: pd.DataFrame = pd.concat(complex_cohort_structure, axis=1)
-    x.columns = [f'sampl{x}' for x in x.columns]
-    mmodels = [decompositions(x,
-                              ranks=[7],
-                              random_starts=20,
-                              top_n=1
-                              )[7][0] for x in complex_cohort_structure]
-    combi = combine_signatures(mmodels, x=x, low_support_threshold=0.2)
-    matched = match_signatures(combi, models.five_es().w)
-    from cvanmf.reapply import _reapply_model
-    from cvanmf.reapply import match_identical
-    combi_model_fit = _reapply_model(y=x,
-                                     w=combi,
-                                     colors=None,
-                                     input_validation=lambda x: x,
-                                     feature_match=match_identical)
-    orig_model_fit = models.five_es().reapply(x)
-    print(matched)
-
-
-def test_experiment3():
-    # Temp function - see how splitting the DRAMA data goes
-    es_x = pd.read_csv(
-        (
-            "https://gitlab.inria.fr/cfrioux/enterosignature-paper/-/raw/main/data/"
-            "GMR_dataset/GMR_genus_level_abundance_normalised.tsv?ref_type=heads"),
-        sep="\t").iloc[:, :]
-    mmodels = decompositions(es_x,
-                             ranks=[5],
-                             random_starts=100,
-                             top_n=1
-                             )[5]
-    combi = combine_signatures(mmodels, x=es_x, low_support_threshold=0.25)
-    matched = match_signatures(combi, models.five_es().w)
-    from cvanmf.reapply import _reapply_model
-    from cvanmf.reapply import match_identical
-    combi_model_fit = _reapply_model(y=es_x,
-                                     w=combi,
-                                     colors=None,
-                                     input_validation=lambda x: x,
-                                     feature_match=match_identical)
-    orig_model_fit = models.five_es().reapply(es_x)
-    print(matched)
-
-
-def test_rewrite():
-    es_x = pd.read_csv(
-        ("/Users/pez23lof/Documents/postdrama_es/MGS.matL5.20240116.rel.txt"),
-        sep="\t", index_col=0).iloc[:, :3000]
-    cohorts_arr = np.random.randint(low=0, high=5, size=(es_x.shape[1]))
-    cohorts = []
-    for i in set(cohorts_arr):
-        cohorts.append(es_x.iloc[:, cohorts_arr == i])
-    mmodels = [decompositions(x,
-                              ranks=[5],
-                              random_starts=10,
-                              top_n=10,
-                              seed=4298
-                              )[5] for x in cohorts]
-    cohort_obj = Cohort(name="COH_1")
-    model_objs = [
-        Cohort(f"COH_{i}").add_models(
-            [
-                Model().add_signatures(Signature.from_comparable(m)) for m in c
-            ])
-        for i, c in enumerate(mmodels)]
-    for i in range(len(cohorts)):
-        model_objs[i].x = cohorts[i]
-    c = Combiner(model_objs)
-    c.merge_similar(0.9)
-    print("After Merge")
-    print(c.clusters)
-    aa = c.clusters[0].support(type="model")
-    c.remove_low_support(retain_alpha=0.05, support_required=0.5)
-    print("After Support")
-    print(c.clusters)
-    c.remove_linear_combinations_2()
-    print("After Linear Comb")
-    print(c.clusters)
-    c.label_by_match(models.five_es())
-    plotter = Signature.mds(c.clusters[0].signatures)
-    plotto = c.clusters[0].plot_mds()
-    plotto = c.plot_mds()
-    match = match_signatures(models.five_es(), Cluster.as_dataframe(c.clusters))
-    plt_featvar = c.clusters[0].plot_feature_variance(
-        top_n=20, split_cohort=True)
-    plt_membersim = c.clusters[0].plot_member_similarity(split_cohort=True)
-
-    def end_tax(tax_list):
-        return [
-            x.split(";")[-1] for x in tax_list
-        ]
-
-    plt_featclust = c.plot_feature_variance(True, 20, end_tax)
-    plt_featclust.save("/Users/pez23lof/test_clustfeat_postdrama_k5.png",
-                       height=12,
-                       width=20, dpi=200)
-    plt_clustsi = c.plot_member_similarity(True)
-    plt_clustsi.save("/Users/pez23lof/test_clustsi_postdrama_k5.png", height=12,
-                     width=20, dpi=200)
-    print(match)
-    foo = 'bar'
-
-
-def test_rewrite_rank_sloppy():
-    # How sloppy can we be about rank selection?
-    es_x = pd.read_csv(
-        ("~/Downloads/GMR_genus_level_abundance_normalised.tsv"),
-        sep="\t").iloc[:, :]
-    mmodels = decompositions(es_x,
-                             ranks=[6],
-                             random_starts=100,
-                             top_n=50,
-                             seed=4298
-                             )
-    amodels = [Model().add_signatures(Signature.from_comparable(c)) for
-               c in itertools.chain.from_iterable(mmodels.values())]
-    cohort_obj = Cohort(name="COH_1", x=es_x)
-    cohort_obj.add_models(amodels)
-    c = Combiner([cohort_obj])
-    c.merge_similar(0.9)
-    aa = c.clusters[0].support(type="model")
-    c.remove_low_support(retain_alpha=0.05, support_required=0.5,
-                         only_cohort_data=False)
-    c.remove_linear_combinations_2(min_small_support_ratio=0.5)
-    match = match_signatures(models.five_es(), Cluster.as_dataframe(c.clusters))
-    # Someting to spot "fragments" - parts of larger signatures
-    # c.clusters[0].plot_feature_variance(top_n=20, split_cohort=True)
-    # c.clusters[0].member_similarity(utri=True)
-    # c.clusters[0].plot_member_similarity(split_cohort=False)
-    c.label_by_match(models.five_es())
-    plt_feat = c.plot_feature_variance(top_n=20,
-                                       label_fn=lambda x: [y.split(";")[-1] for
-                                                           y in x])
-    plt_sim = c.plot_member_similarity()
-    print(match)
-    foo = 'bar'
-
-
-def test_rewrite_synthetic(complex_cohort_structure: Dict[str, pd.DataFrame]):
-    # Decompositions
-    models = {name: decompositions(x, ranks=[4, 5, 6], random_starts=40,
-                                   top_n=30,
-                                   progress_bar=False, seed=4298) for name, x in
-              complex_cohort_structure.items()}
-
-    # Prepare cohort structure
-    model_objs = [
-        Cohort(name).add_models(
-            [
-                Model().add_signatures(Signature.from_comparable(m)) for m in
-                itertools.chain.from_iterable(decomps.values())
-            ])
-        for name, decomps in models.items()]
-    for name, data in complex_cohort_structure.items():
-        next(x for x in model_objs if x.name == name).x = data
-
-    # Merge
-    c = Combiner(model_objs)
-    c.merge_similar(cosine_threshold=0.9)
-    spec = c.identify_cohort_specific()
-    c.remove_low_support(support_required=0.2, retain_alpha=0.05,
-                         only_cohort_data=False, exempt_clusters=spec)
-    c.remove_linear_combinations_2(cosine_threshold=0.9)
-    c.label_by_match(cvanmf.models.five_es())
-    plot = c.plot_mds()
-    foo = 'bar'
-
-
-def test_split_dataframe_to_cohorts():
-    smpl_names: List[str] = (
-            [f'CA_S{i}' for i in range(10)] +
-            [f'CB_S{i}' for i in range(20)] +
-            [f'CC_S{i}' for i in range(3)]
-    )
-    smpl_cohorts: List[str] = [x[1] for x in smpl_names]
-    cohort_series: pd.Series = pd.Series(smpl_cohorts, index=smpl_names)
-    df: pd.DataFrame = pd.DataFrame(
-        np.random.uniform(size=(100, len(smpl_names))),
-        columns=smpl_names
-    )
-    cohort_dict: Dict = split_dataframe_to_cohorts(df, cohort_series,
-                                                   min_size=5)
-    assert len(cohort_dict) == 2
+# def test_combine_signatures():
+#     # Temp dev testing
+#     # Combine signatures with themselves
+#     # combine_signatures([models.five_es(), models.five_es()])
+#     dupd: pd.DataFrame = models.five_es().w
+#     dupd.loc[:, "Dupd_1"] = dupd.iloc[:, 0]
+#     dupd.loc[:, "Merg_1"] = dupd.iloc[:, 0] + dupd.iloc[:, 1]
+#     dupd.loc[:, "Rand_1"] = np.random.uniform(size=(dupd.shape[0], 1))
+#     dupd.loc[:, "Merg_2"] = dupd.iloc[:, 1] + 4 * dupd.iloc[:, 4]
+#     combine_signatures([models.five_es(), dupd])
+#
+#
+# def test_experiment():
+#     # Temp function - see how splitting the DRAMA data goes
+#     es_x = pd.read_csv(
+#         (
+#             "https://gitlab.inria.fr/cfrioux/enterosignature-paper/-/raw/main/data/"
+#             "GMR_dataset/GMR_genus_level_abundance_normalised.tsv?ref_type=heads"),
+#         sep="\t").iloc[:, :]
+#     cohorts_arr = np.random.randint(low=0, high=20, size=(es_x.shape[1]))
+#     cohorts = []
+#     for i in set(cohorts_arr):
+#         cohorts.append(es_x.iloc[:, cohorts_arr == i])
+#     mmodels = [decompositions(x,
+#                               ranks=[8],
+#                               random_starts=100,
+#                               top_n=1
+#                               )[8][0] for x in cohorts]
+#     combi = combine_signatures(mmodels, x=es_x, low_support_threshold=0.25)
+#     matched = match_signatures(combi, models.five_es().w)
+#     from cvanmf.reapply import _reapply_model
+#     from cvanmf.reapply import match_identical
+#     combi_model_fit = _reapply_model(y=es_x,
+#                                      w=combi,
+#                                      colors=None,
+#                                      input_validation=lambda x: x,
+#                                      feature_match=match_identical)
+#     orig_model_fit = models.five_es().reapply(es_x)
+#     print(matched)
+#
+#
+# def test_experiment2(complex_cohort_structure: List[pd.DataFrame]):
+#     # Temp function - see how splitting the DRAMA data goes
+#     x: pd.DataFrame = pd.concat(complex_cohort_structure, axis=1)
+#     x.columns = [f'sampl{x}' for x in x.columns]
+#     mmodels = [decompositions(x,
+#                               ranks=[7],
+#                               random_starts=20,
+#                               top_n=1
+#                               )[7][0] for x in complex_cohort_structure]
+#     combi = combine_signatures(mmodels, x=x, low_support_threshold=0.2)
+#     matched = match_signatures(combi, models.five_es().w)
+#     from cvanmf.reapply import _reapply_model
+#     from cvanmf.reapply import match_identical
+#     combi_model_fit = _reapply_model(y=x,
+#                                      w=combi,
+#                                      colors=None,
+#                                      input_validation=lambda x: x,
+#                                      feature_match=match_identical)
+#     orig_model_fit = models.five_es().reapply(x)
+#     print(matched)
+#
+#
+# def test_experiment3():
+#     # Temp function - see how splitting the DRAMA data goes
+#     es_x = pd.read_csv(
+#         (
+#             "https://gitlab.inria.fr/cfrioux/enterosignature-paper/-/raw/main/data/"
+#             "GMR_dataset/GMR_genus_level_abundance_normalised.tsv?ref_type=heads"),
+#         sep="\t").iloc[:, :]
+#     mmodels = decompositions(es_x,
+#                              ranks=[5],
+#                              random_starts=100,
+#                              top_n=1
+#                              )[5]
+#     combi = combine_signatures(mmodels, x=es_x, low_support_threshold=0.25)
+#     matched = match_signatures(combi, models.five_es().w)
+#     from cvanmf.reapply import _reapply_model
+#     from cvanmf.reapply import match_identical
+#     combi_model_fit = _reapply_model(y=es_x,
+#                                      w=combi,
+#                                      colors=None,
+#                                      input_validation=lambda x: x,
+#                                      feature_match=match_identical)
+#     orig_model_fit = models.five_es().reapply(es_x)
+#     print(matched)
+#
+#
+# def test_rewrite():
+#     es_x = pd.read_csv(
+#         ("/Users/pez23lof/Documents/postdrama_es/MGS.matL5.20240116.rel.txt"),
+#         sep="\t", index_col=0).iloc[:, :3000]
+#     cohorts_arr = np.random.randint(low=0, high=5, size=(es_x.shape[1]))
+#     cohorts = []
+#     for i in set(cohorts_arr):
+#         cohorts.append(es_x.iloc[:, cohorts_arr == i])
+#     mmodels = [decompositions(x,
+#                               ranks=[5],
+#                               random_starts=10,
+#                               top_n=10,
+#                               seed=4298
+#                               )[5] for x in cohorts]
+#     cohort_obj = Cohort(name="COH_1")
+#     model_objs = [
+#         Cohort(f"COH_{i}").add_models(
+#             [
+#                 Model().add_signatures(Signature.from_comparable(m)) for m in c
+#             ])
+#         for i, c in enumerate(mmodels)]
+#     for i in range(len(cohorts)):
+#         model_objs[i].x = cohorts[i]
+#     c = Combiner(model_objs)
+#     c.merge_similar(0.9)
+#     print("After Merge")
+#     print(c.clusters)
+#     aa = c.clusters[0].support(type="model")
+#     c.remove_low_support(retain_alpha=0.05, support_required=0.5)
+#     print("After Support")
+#     print(c.clusters)
+#     c.remove_linear_combinations_2()
+#     print("After Linear Comb")
+#     print(c.clusters)
+#     c.label_by_match(models.five_es())
+#     plotter = Signature.mds(c.clusters[0].signatures)
+#     plotto = c.clusters[0].plot_mds()
+#     plotto = c.plot_mds()
+#     match = match_signatures(models.five_es(), Cluster.as_dataframe(c.clusters))
+#     plt_featvar = c.clusters[0].plot_feature_variance(
+#         top_n=20, split_cohort=True)
+#     plt_membersim = c.clusters[0].plot_member_similarity(split_cohort=True)
+#
+#     def end_tax(tax_list):
+#         return [
+#             x.split(";")[-1] for x in tax_list
+#         ]
+#
+#     plt_featclust = c.plot_feature_variance(True, 20, end_tax)
+#     plt_featclust.save("/Users/pez23lof/test_clustfeat_postdrama_k5.png",
+#                        height=12,
+#                        width=20, dpi=200)
+#     plt_clustsi = c.plot_member_similarity(True)
+#     plt_clustsi.save("/Users/pez23lof/test_clustsi_postdrama_k5.png", height=12,
+#                      width=20, dpi=200)
+#     print(match)
+#     foo = 'bar'
+#
+#
+# def test_rewrite_rank_sloppy():
+#     # How sloppy can we be about rank selection?
+#     es_x = pd.read_csv(
+#         ("~/Downloads/GMR_genus_level_abundance_normalised.tsv"),
+#         sep="\t").iloc[:, :]
+#     mmodels = decompositions(es_x,
+#                              ranks=[6],
+#                              random_starts=100,
+#                              top_n=50,
+#                              seed=4298
+#                              )
+#     amodels = [Model().add_signatures(Signature.from_comparable(c)) for
+#                c in itertools.chain.from_iterable(mmodels.values())]
+#     cohort_obj = Cohort(name="COH_1", x=es_x)
+#     cohort_obj.add_models(amodels)
+#     c = Combiner([cohort_obj])
+#     c.merge_similar(0.9)
+#     aa = c.clusters[0].support(type="model")
+#     c.remove_low_support(retain_alpha=0.05, support_required=0.5,
+#                          only_cohort_data=False)
+#     c.remove_linear_combinations_2(min_small_support_ratio=0.5)
+#     match = match_signatures(models.five_es(), Cluster.as_dataframe(c.clusters))
+#     # Someting to spot "fragments" - parts of larger signatures
+#     # c.clusters[0].plot_feature_variance(top_n=20, split_cohort=True)
+#     # c.clusters[0].member_similarity(utri=True)
+#     # c.clusters[0].plot_member_similarity(split_cohort=False)
+#     c.label_by_match(models.five_es())
+#     plt_feat = c.plot_feature_variance(top_n=20,
+#                                        label_fn=lambda x: [y.split(";")[-1] for
+#                                                            y in x])
+#     plt_sim = c.plot_member_similarity()
+#     print(match)
+#     foo = 'bar'
+#
+#
+# def test_rewrite_synthetic(complex_cohort_structure: Dict[str, pd.DataFrame]):
+#     # Decompositions
+#     models = {name: decompositions(x, ranks=[4, 5, 6], random_starts=40,
+#                                    top_n=30,
+#                                    progress_bar=False, seed=4298) for name, x in
+#               complex_cohort_structure.items()}
+#
+#     # Prepare cohort structure
+#     model_objs = [
+#         Cohort(name).add_models(
+#             [
+#                 Model().add_signatures(Signature.from_comparable(m)) for m in
+#                 itertools.chain.from_iterable(decomps.values())
+#             ])
+#         for name, decomps in models.items()]
+#     for name, data in complex_cohort_structure.items():
+#         next(x for x in model_objs if x.name == name).x = data
+#
+#     # Merge
+#     c = Combiner(model_objs)
+#     c.merge_similar(cosine_threshold=0.9)
+#     spec = c.identify_cohort_specific()
+#     c.remove_low_support(support_required=0.2, retain_alpha=0.05,
+#                          only_cohort_data=False, exempt_clusters=spec)
+#     c.remove_linear_combinations_2(cosine_threshold=0.9)
+#     c.label_by_match(cvanmf.models.five_es())
+#     plot = c.plot_mds()
+#     foo = 'bar'
+#
+#
+# def test_split_dataframe_to_cohorts():
+#     smpl_names: List[str] = (
+#             [f'CA_S{i}' for i in range(10)] +
+#             [f'CB_S{i}' for i in range(20)] +
+#             [f'CC_S{i}' for i in range(3)]
+#     )
+#     smpl_cohorts: List[str] = [x[1] for x in smpl_names]
+#     cohort_series: pd.Series = pd.Series(smpl_cohorts, index=smpl_names)
+#     df: pd.DataFrame = pd.DataFrame(
+#         np.random.uniform(size=(100, len(smpl_names))),
+#         columns=smpl_names
+#     )
+#     cohort_dict: Dict = split_dataframe_to_cohorts(df, cohort_series,
+#                                                    min_size=5)
+#     assert len(cohort_dict) == 2
 

@@ -36,7 +36,7 @@ import shutil
 import tarfile
 from functools import cached_property
 from typing import (Optional, NamedTuple, List, Iterable, Union, Tuple, Set,
-                    Any, Dict, Callable, Literal, Hashable)
+                    Any, Dict, Callable, Literal, Hashable, Generator)
 
 import click
 import matplotlib.figure
@@ -305,30 +305,22 @@ class BicvSplit:
 
         :param splits: Iterable of BicvSplit objects
         :param path: Directory to write to
-        :param fix_i: Where values of i for object in splits are not unique,
-            renumber them so that they are.
+        :param fix_i: Renumber all splits starting from 0. Does not check
+            if existing numbering is unique.
         :param compress: Use compression
         :param force: Overwrite existing files
         """
-        # Correct numbering if needed
-        i_vals: Set[Optional[int]] = set(
-            x.i for x in splits
-        )
-        if len(i_vals) != len(list(splits)) or None in i_vals:
-            # Some non-unique values of i, so all will be renumbered
-            logging.warning("Non-unique values of i while saving shuffles")
+        # Splits are likely to be passed as a generator, so we can't count,
+        # index, or check all contents of this object. This is to prevent
+        # shuffles of large matrices having to all be held in memory.
+        split: BicvSplit
+        num_splits: int = 0
+        for i, split in enumerate(splits):
             if fix_i:
-                logging.warning("Renumbering all shuffles")
-                for i, x in enumerate(splits):
-                    x.i = i
-            else:
-                raise ValueError("Non-unique values of i while saving shuffles")
-
-        # Write all
-        _ = [x.save_npz(path=path, compress=compress, force=force)
-             for x in splits]
-        logging.info("%s shuffles saved to %s", len(list(splits)),
-                     path)
+                split.i = i
+            split.save_npz(path=path, compress=compress, force=force)
+            num_splits = i
+        logging.info("%s shuffles saved to %s", num_splits, path)
 
     @staticmethod
     def load_npz(path: pathlib.Path,
@@ -362,7 +354,7 @@ class BicvSplit:
             path: Union[pathlib.Path, str],
             allow_pickle: bool = True,
             fix_i: bool = False
-    ) -> List[BicvSplit]:
+    ) -> Generator[BicvSplit]:
         """Read shuffles from files.
 
         Reads either all the npz files in a directory, or those specified by a
@@ -373,48 +365,47 @@ class BicvSplit:
         :param path: Directory with .npz files, or glob identifying .npz files
         :param allow_pickle: Allow unpickling when loading; necessary for
             compressed files.
-        :param fix_i: Renumber shuffles
+        :param fix_i: Renumber shuffles.
+        :returns: Generator of BicvSplit objects.
         """
-        npz_glob: str = path
-        if isinstance(path, pathlib.Path):
-            npz_glob = str(path / "*.npz")
-        logging.info("Loading shuffles from %s", str(npz_glob))
-        shuffles: List[BicvSplit] = [
-            BicvSplit.load_npz(path=pathlib.Path(x),
-                               allow_pickle=allow_pickle)
-            for x in glob.glob(npz_glob)
-        ]
-        logging.info("%s shuffles loaded", len(shuffles))
-        if fix_i:
-            logging.info("Reindexing all loaded shuffles")
-            for i, x in shuffles:
-                x.i = i
-        return sorted(shuffles, key=lambda x: x.i)
+        npz_pth: pathlib.Path = (
+            path if isinstance(path, pathlib.Path)
+            else
+            pathlib.Path(path)
+        )
+        logging.info("Loading shuffles from %s", str(npz_pth))
+        for i, file in enumerate(npz_pth.glob("*.npz")):
+            shuffle: BicvSplit = BicvSplit.load_npz(path=pathlib.Path(file),
+                                                    allow_pickle=allow_pickle)
+            if fix_i:
+                shuffle.i = fix_i
+            yield shuffle
 
     @staticmethod
     def from_matrix(
             df: pd.DataFrame,
             n: int = 1,
             random_state: Optional[Union[int, np.random.Generator]] = None
-    ) -> List[BicvSplit]:
+    ) -> Generator[BicvSplit]:
         """Create random shuffles and splits of a matrix
 
         :param df: Matrix to shuffle and split
         :param n: Number of shuffles
         :param random_state: Random state, either int seed or numpy Generator;
             None for default numpy random Generator.
+        :returns: A generator of  splits, as BicvSplit objects
         """
         rnd: np.random.Generator = np.random.default_rng(random_state)
         logging.info(
             "Generating %s splits with state %s", str(n), str(rnd))
 
-        shuffles: Iterable[pd.DataFrame] = list(
+        shuffles: Iterable[pd.DataFrame] = (
             map(BicvSplit.__bicv_shuffle, (df for _ in range(n)))
         )
-        splits: List[List[pd.DataFrame]] = list(
+        splits: Iterable[Iterable[pd.DataFrame]] = (
             map(BicvSplit.__bicv_split, shuffles)
         )
-        return [BicvSplit(x, i) for i, x in enumerate(splits)]
+        return (BicvSplit(x, i) for i, x in enumerate(splits))
 
     @staticmethod
     def __bicv_split(df: pd.DataFrame) -> List[pd.DataFrame]:
@@ -721,10 +712,8 @@ def rank_selection(x: pd.DataFrame,
     on the measures.
 
     No multiprocessing is used, as a majority of build of scikit-learn
-    make good use of multiple processors anyway. Decompositions are run
-    from highest rank to lowest. This is to give a worst case, rather than
-    over optimistic estimate, of remaining time when using the progress
-    bar.
+    make good use of multiple processors anyway (depending on compilation of
+    underlying libraries).
 
     This method returns a dictionary with each rank as a key, and a list
     containing one :class:`BicvResult` for each shuffle.
@@ -771,22 +760,32 @@ def rank_selection(x: pd.DataFrame,
     rng: np.random.Generator = np.random.default_rng(seed)
 
     # Generate shuffles of data
-    shuffles: List[BicvSplit] = BicvSplit.from_matrix(x,
-                                                      random_state=rng,
-                                                      n=shuffles)
+    shuffle_gen: Generator[BicvSplit] = BicvSplit.from_matrix(
+        x, random_state=rng, n=shuffles)
+
+    rank_list: List[int] = sorted(list(ranks), reverse=True)
 
     # Make a generator of parameter objects to pass to bicv
-    params: List[NMFParameters] = list(itertools.chain.from_iterable(
-        [[NMFParameters(x=x, rank=k, seed=rng, **args) for x in shuffles]
-         for k in sorted(ranks, reverse=True)]
-    ))
+    # params: Iterable[NMFParameters] = itertools.chain.from_iterable(
+    #     [[NMFParameters(x=x, rank=k, seed=rng, **args) for x in shuffle_gen]
+    #      for k in sorted(ranks, reverse=True)]
+    # )
+    params: Iterable[NMFParameters] = itertools.chain.from_iterable(
+        ((NMFParameters(x=x, rank=k, seed=rng, **args) for k in rank_list)
+         for x in shuffle_gen)
+    )
+
 
     # Get results
     # No real use in multiprocessing, sklearn implementation generally makes
     # good use of multiple cores anyway. Multiprocessing just makes processes
     # compete for resources and is slower.
+    total_runs: int = len(rank_list) * shuffles
     res_map: Iterable = (
-        map(bicv, tqdm(params)) if progress_bar else map(bicv, params))
+        map(bicv, tqdm(params, total=total_runs))
+        if progress_bar else
+        map(bicv, params)
+    )
     results: List[BicvResult] = sorted(
         list(res_map),
         key=lambda x: x.parameters.rank
@@ -1139,22 +1138,27 @@ def regu_selection(x: pd.DataFrame,
     rng: np.random.Generator = np.random.default_rng(seed)
 
     # Generate shuffles of data
-    shuffles: List[BicvSplit] = BicvSplit.from_matrix(x,
-                                                      random_state=rng,
-                                                      n=shuffles)
+    shuffles_gen: Generator[BicvSplit] = BicvSplit.from_matrix(
+        x, random_state=rng, n=shuffles)
 
     # Make a generator of parameter objects to pass to bicv
     params: List[NMFParameters] = list(itertools.chain.from_iterable(
-        [[NMFParameters(x=x, alpha=a, seed=rng, **args) for x in shuffles]
-         for a in sorted(alpha_list)]
+        [[NMFParameters(x=x, alpha=a, seed=rng, **args) for a in
+          sorted(alpha_list)]
+         for x in shuffles_gen]
     ))
 
     # Get results
     # No real use in multiprocessing, sklearn implementation generally makes
-    # good use of multiple cores anyway. Multiprocessing just makes processes
-    # compete for resources and is slower.
+    # good use of multiple cores anyway (depending on underlying compilation
+    # of BLAS etc). Multiprocessing just makes processes compete for resources
+    # and is slower.
+    total_runs: int = len(alpha_list) * shuffles
     res_map: Iterable = (
-        map(bicv, tqdm(params)) if progress_bar else map(bicv, params))
+        map(bicv, tqdm(params, total=total_runs))
+        if progress_bar else
+        map(bicv, params)
+    )
     results: List[BicvResult] = sorted(
         list(res_map),
         key=lambda x: x.parameters.alpha
