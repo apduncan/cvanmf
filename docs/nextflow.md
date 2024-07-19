@@ -300,18 +300,17 @@ Command wrapper:
 [...]
 ```
 
-In this case setting the `conda.cacheDir` directive in the config file 
-resolved the problem. Add this to the profile in your config
+The solution I [have found](https://github.com/nextflow-io/nextflow/issues/4161)
+is to install `conda` in the the environment you're launching the pipeline from.
+So if I launch nextflow from the environment `nfenv`
 
+```commandline
+micromamba install -n nfenv conda
 ```
-profiles {
-    slurm {
-        ...
-        conda.enabled = true
-        conda.useMicromamba = true
-        conda.cacheDir = '/some/path/mambaforge/envs'
-        ...
-```
+
+Nextflow will still use micromamba for creating environments, but needs conda in
+order to activate the environment, so installing it should make it available 
+for that purpose.
 
 ## Parameter list
 

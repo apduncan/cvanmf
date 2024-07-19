@@ -828,7 +828,8 @@ def suggest_rank(
     wish to customise the behaviour.
 
     :param rank_selection_results: Results from :func:`rank_selection`, or
-    these results in DataFrame format from :meth:`BicvResult.results_to_table`
+        these results in DataFrame format from
+        :meth:`BicvResult.results_to_table`
     :param summarise: Function to summarise results from a shuffle
     :param kwargs: Arguments passed to `KneeLocator` constructor
     """
@@ -1061,22 +1062,23 @@ def regu_selection(x: pd.DataFrame,
 
     Run 9-fold bi-cross validation across a range of regularisation ratios,
     for a single rank. For a brief description of bi-cross validation see
-    :function:`rank_selecton`
+    :func:`rank_selecton`
 
     No multiprocessing is used, as a majority of build of scikit-learn
     make good use of multiple processors anyway.
 
     This method returns a tuple with
-    * a float which is the tested ratio which meets the critera in
-    the ES paper
-    * a dictionary with each regularisation ratio as a key, and a list
-    containing one :class:`BicvResult` for each shuffle
 
-    Values other than 9 for folds are possible, currently this package only
-    supports 9.
+    * a float which is the tested alpha which meets the criteria in
+    the ES paper
+    * a dictionary with each alpha value as a key, and a list containing one
+    :class:`BicvResult` for each shuffle
+
+    Values other than 9 for folds are possible, however currently this package
+    only supports 9.
 
     :param x: Input matrix.
-    :param rank: Ranks of decomposition.
+    :param rank: Rank of decomposition.
     :param alphas: Regularisation alpha parameters to be searched. If left
         blank a default range will be used.
     :param scale_samples: Divide alpha by number of samples. This is provided
@@ -1197,7 +1199,7 @@ def suggest_alpha(regu_results: Dict[float, List[BicvResult]]) -> float:
     doesn't use :func:`regu_selection`, and so it can be called after.
 
     :param regu_results: Dictionary with keys being alpha values, and values
-    a list of :class:`BicvResult` objects.
+        a list of :class:`BicvResult` objects.
     """
     # Give a nicer error if 0.0 is not included
     if 0.0 not in regu_results:
@@ -1224,7 +1226,6 @@ def suggest_alpha(regu_results: Dict[float, List[BicvResult]]) -> float:
             break
         best_a = a
     return best_a
-
 
 
 def plot_regu_selection(
@@ -2579,6 +2580,26 @@ class Decomposition:
         matrix = matrix.T if transpose else matrix
         scaled: pd.DataFrame = matrix / matrix.sum()
         return scaled.T if transpose else scaled
+
+    def consensus_matrix(
+            self,
+            on: Union[pd.DataFrame, Literal['h', 'w']] = 'h'
+    ):
+        """Consensus matrix of either H or W.
+
+        Most typically, the consensus matrix is calculated on the H matrix,
+        and is a binary matrix representing whether :math:`i` is
+        assigned to the same signature as sample :math:`j`. Samples are
+        assigned to signatures based on their maximum weight. When calculated
+        on W, it is the same but for features assigned.
+
+        The primary use of this is in generating a :math:`\bar{C}` matrix, the
+        mean number of times two elements are assigned to the same signature.
+        :math:`\bar{C}` is used to calculate the cophenetic correlation,
+        a method of determining suitable rank.
+
+        This is returned in sparse matrix format.
+        """
 
     def discrete_signature_scale(
             self,

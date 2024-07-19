@@ -30,6 +30,7 @@ sphinx-autoapi = "^3.0.0"
 sphinx-rtd-theme = "^2.0.0"
 sphinx-click = "^5.1.0"
 furo = "^2024.5.6"
+python-semantic-release = "^9.8.5"
 
 [tool.semantic_release]
 version_variable = "pyproject.toml:version" # version location
