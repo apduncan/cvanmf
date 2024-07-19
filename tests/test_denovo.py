@@ -15,7 +15,9 @@ from cvanmf import models
 from cvanmf.denovo import BicvSplit, BicvFold, bicv, _cosine_similarity, \
     rank_selection, BicvResult, plot_rank_selection, decompose, NMFParameters, \
     decompositions, Decomposition, cli_rank_selection, regu_selection, \
-    plot_regu_selection, cli_regu_selection, suggest_rank
+    plot_regu_selection, cli_regu_selection, suggest_rank, _cbar, \
+    _cophenetic_correlation, cophenetic_correlation, _dispersion, dispersion, \
+    plot_stability_rank_selection
 from cvanmf.reapply import match_identical
 
 
@@ -816,7 +818,7 @@ def test_save(small_decomposition: Decomposition,
     for f in odir_specific.glob("*.pdf"):
         assert str(f.name) in [
             "plot_feature_weight.pdf", "plot_pcoa.pdf"], \
-        f"Unexpected plot {f} produced"
+            f"Unexpected plot {f} produced"
 
 
 def test_quality_series(small_decomposition):
@@ -986,3 +988,70 @@ def test_suggest_rank(
 ):
     res: Dict[str, float] = suggest_rank(small_rank_selection)
     foo = 'ar'
+
+
+def test_consensus_matrix(
+        small_decomposition
+):
+    # Slice to there is an uneven number of features and samples
+    sliced: Decomposition = small_decomposition[:75, :, :]
+    c = sliced.consensus_matrix()
+    assert c.shape == (sliced.h.shape[1],
+                       sliced.h.shape[1]), "Incorrect shape on H (default)"
+    cw = sliced.consensus_matrix('w')
+    assert cw.shape == (sliced.w.shape[0],
+                        sliced.w.shape[0]), "Incorrect shape on W"
+    # Sum must be > 0, must be some elements in the same cluster
+    assert cw.sum() > 0, "No True values in consensus matrix"
+
+
+def test__cbar(
+        small_decompositions_random
+):
+    one_rank: List[Decomposition] = (
+        list(small_decompositions_random.values())[0])
+    cbar = _cbar(x.consensus_matrix() for x in one_rank)
+    assert cbar.shape == (one_rank[0].h.shape[1],
+                          one_rank[0].h.shape[1]), \
+        "Incorrect shape for cbar on H"
+
+
+def test__cophenetic_correlation(
+        small_decompositions_random
+):
+    one_rank: List[Decomposition] = (
+        list(small_decompositions_random.values())[0])
+    cbar = _cbar(x.consensus_matrix() for x in one_rank)
+
+
+def test_cophenetic_correlation(small_decompositions_random):
+    res = cophenetic_correlation(small_decompositions_random)
+
+
+def test__dispersion(small_decompositions_random):
+    # All ones or zeros should give 1 (very consistent)
+    res_ones = _dispersion(np.ones(shape=(10, 10)))
+    assert res_ones == 1.0, "Dispersion for all 1s should be 1."
+    res_zeroes = _dispersion(np.zeros(shape=(10, 10)))
+    assert res_zeroes == 1.0, "Dispersion for all 0s should 1"
+    res_rand = _dispersion(np.random.uniform(size=(10, 10)))
+    assert res_rand < 0.9, "Dispersion for random should be low."
+    one_rank: List[Decomposition] = (
+        list(small_decompositions_random.values())[0])
+    cbar = _cbar(x.consensus_matrix() for x in one_rank)
+    res = _dispersion(cbar)
+
+
+def test_dispersion(small_decompositions_random):
+    res = dispersion(small_decompositions_random)
+    ff = 66
+
+
+def test_plot_stability_rank_selection(
+        small_decompositions_random,
+        tmp_path: pathlib.Path,
+):
+    plt: plotnine.ggplot = plot_stability_rank_selection(
+        small_decompositions_random)
+    plt.save(tmp_path / "plt_stability.png")
+    ff = 66

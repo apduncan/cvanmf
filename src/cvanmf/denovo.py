@@ -34,7 +34,7 @@ import pathlib
 import re
 import shutil
 import tarfile
-from functools import cached_property
+from functools import cached_property, reduce
 from typing import (Optional, NamedTuple, List, Iterable, Union, Tuple, Set,
                     Any, Dict, Callable, Literal, Hashable, Generator)
 
@@ -47,6 +47,8 @@ import patchworklib as pw
 import plotnine
 import yaml
 from kneed import KneeLocator
+from scipy import sparse
+from scipy.cluster.hierarchy import linkage, cophenet
 from scipy.spatial.distance import pdist, squareform
 from skbio import OrdinationResults
 from sklearn import manifold
@@ -811,6 +813,7 @@ def suggest_rank(
         rank_selection_results: Union[Dict[int, List[BicvResult]],
         pd.DataFrame],
         summarise: Callable[[np.ndarray], float] = np.mean,
+        measures: List[str] = ['cosine_similarity', 'r_squared'],
         **kwargs
 ) -> Dict[str, int]:
     """Suggest a suitable rank.
@@ -831,6 +834,7 @@ def suggest_rank(
         these results in DataFrame format from
         :meth:`BicvResult.results_to_table`
     :param summarise: Function to summarise results from a shuffle
+    :param measures: The measures to consider if passed a dataframe
     :param kwargs: Arguments passed to `KneeLocator` constructor
     """
     df: pd.DataFrame = (
@@ -840,7 +844,7 @@ def suggest_rank(
             rank_selection_results, summarise=summarise, **kwargs)
     )
     return (
-        df[['rank', 'cosine_similarity', 'r_squared']]
+        df[['rank'] + measures]
         .groupby('rank')
         .median()
         .apply(__detect_elbow, **kwargs)
@@ -1433,6 +1437,163 @@ def _sparsity(x: np.ndarray) -> float:
     :returns: Sparsity, 0 to 1
     """
     return 1 - (np.count_nonzero(x) / x.size)
+
+
+def cophenetic_correlation(
+        decompositions: Dict[int, List[Decomposition]],
+        on: Literal['h', 'w'] = 'h'
+) -> pd.Series:
+    """Cophenetic correlation coefficient for rank selection
+
+    The cophenetic correlation coefficient (ccc) is a commonly used way to
+    select a suitable rank for decompositions (Brunet 2004). It is based on
+    assigning each sample or feature to a single signature, and looking for
+    stability in which are assigned to the same signature across multiple random
+    initialisations.
+
+    Our primary method for rank selection is bicrossvalidation, but we offer
+    the ability to calculate ccc when you have performed multiple
+    decompositions for a rank using :func:`decompositions`.
+
+    :param decompositions: Results from the :func:`decompositions` function.
+        A dictionary with the key being a rank, the value a list of
+        decompositions for that rank.
+    :param on: Look for stability in the assignment in the H matrix (samples)
+        or W matrix (features).
+    :returns: Series indexed by rank and with value being the ccc.
+    """
+
+    return pd.Series(
+        index=decompositions.keys(),
+        data=(
+            _cophenetic_correlation(
+                _cbar(x.consensus_matrix(on=on) for x in k))
+            for k in decompositions.values()
+        ),
+        name="cophenetic_correlation"
+    )
+
+
+def dispersion(
+        decompositions: Dict[int, List[Decomposition]],
+        on: Literal['h', 'w'] = 'h'
+) -> pd.Series:
+    """Dispersion coefficient for rank selection
+
+    The dispersion coefficient (ccc) is a method for rank selection which
+    looks for consistency in the average consensus matrix (Park 2007).
+    This shares the same underlying data structure as
+    :func:`cophenetic_correlation`, the average consensus matrix, looking at
+    how often elements are assigned to the same signature, with elements
+    assigned to the signature with maximum weight. The value ranges between 0
+    and 1 with 1 indicating perfect stability, and 0 a highly scattered
+    consensus matrix.
+
+    Our primary method for rank selection is bicrossvalidation, but we offer
+    the ability to calculate dispersion when you have performed multiple
+    decompositions for a rank using :func:`decompositions`.
+
+    :param decompositions: Results from the :func:`decompositions` function.
+        A dictionary with the key being a rank, the value a list of
+        decompositions for that rank.
+    :param on: Look for stability in the assignment in the H matrix (samples)
+        or W matrix (features).
+    :returns: Series indexed by rank and with value being the dispersion
+        coefficient.
+    """
+
+    return pd.Series(
+        index=decompositions.keys(),
+        data=(
+            _dispersion(
+                _cbar(x.consensus_matrix(on=on) for x in k))
+            for k in decompositions.values()
+        ),
+        name="dispersion"
+    )
+
+
+def plot_stability_rank_selection(
+        decompositions: Optional[Dict[int, List[Decomposition]]] = None,
+        series: Optional[List[pd.Series]] = None,
+        include: List[str] = ['cophenetic_correlation', 'dispersion'],
+        suggested_rank: bool = True,
+        on: Literal['h', 'w'] = 'h'
+) -> plotnine.ggplot:
+    """Plot results for stability based rank selection methods.
+
+    :param decompositions: Results from :func:`decompositions`. Not used if
+        series is passed.
+    :param series: Series to plot, resulting from
+        :func:`cophenetic_correlation` or :func:`dispersion`.
+    :param include: Which method to include in the plot,
+        with 'cophenetic_correlation' being cophenetic correlation and
+        'dispersion' being dispersion.
+    :param suggested_rank: Estimate suggested rank.
+    :param: Calculate stability of H (samples) or W (features). Not used if
+        passed series.
+    """
+    if series is None and decompositions is None:
+        raise ValueError('Must provide one of decompositions or series.')
+    if series is None:
+        series = []
+        if 'cophenetic_correlation' in include:
+            series.append(cophenetic_correlation(decompositions, on=on))
+        if "dispersion" in include:
+            series.append(dispersion(decompositions, on=on))
+    series = [x for x in series if x.name in include]
+    if len(series) == 0:
+        raise ValueError(f"No valid measures in {include}")
+    df: pd.DataFrame = (
+        pd.concat(series, axis=1)
+        .stack()
+        .to_frame('value')
+        .reset_index(names=['rank', 'measure'])
+    )
+    plt: plotnine.ggplot = (
+        plotnine.ggplot(
+            df,
+            mapping=plotnine.aes(x='factor(rank)', y='value')
+        ) +
+        plotnine.geom_line(mapping=plotnine.aes(group="measure")) +
+        plotnine.geom_point(mapping=plotnine.aes(color="measure")) +
+        plotnine.facet_wrap(facets="measure", scales="free_y") +
+        plotnine.ylab("Value") +
+        plotnine.xlab("Rank") +
+        plotnine.ggtitle("Stability based rank selection")
+    )
+
+    # Add auto rank suggestion
+    if suggested_rank == True:
+        suggested: Dict[str, int] = suggest_rank(
+            pd.concat(series, axis=1).reset_index(names='rank'),
+            measures=include
+        )
+        suggested_df: pd.DataFrame = (
+            pd.Series(suggested)
+            .to_frame('rank')
+            .reset_index(names='measure')
+        )
+        suggested_df = suggested_df.loc[suggested_df['measure'].isin(include)]
+        # Determine the x-position of the selected rank, as the line gets
+        # plotted at position n along the axis
+        ranks_ordered: List[int] = sorted(df['rank'].unique())
+        suggested_df['rank_pos'] = suggested_df['rank'].apply(
+            lambda x: (np.nan if x is None or np.isnan(x) else
+                       ranks_ordered.index(x) + 1))
+
+        plt = (
+            plt
+            + plotnine.geom_vline(
+                data=suggested_df,
+                mapping=plotnine.aes(xintercept="rank_pos"),
+                linetype="dashed",
+                color="black",
+                alpha=.75,
+                size=1
+            )
+        )
+    return plt
 
 
 def _write_symlink(path: pathlib.Path,
@@ -2520,7 +2681,7 @@ class Decomposition:
         )
 
     def scaled(self,
-               matrix: Union[pd.DataFrame, str],
+               matrix: Union[pd.DataFrame, Literal['h', 'w']],
                by: Optional[str] = None
                ) -> pd.DataFrame:
         """Total sum scaled version of a matrix.
@@ -2583,8 +2744,8 @@ class Decomposition:
 
     def consensus_matrix(
             self,
-            on: Union[pd.DataFrame, Literal['h', 'w']] = 'h'
-    ):
+            on: Union[Literal['h', 'w'], pd.DataFrame] = 'h'
+    ) -> sparse.csr_array:
         """Consensus matrix of either H or W.
 
         Most typically, the consensus matrix is calculated on the H matrix,
@@ -2598,8 +2759,37 @@ class Decomposition:
         :math:`\bar{C}` is used to calculate the cophenetic correlation,
         a method of determining suitable rank.
 
-        This is returned in sparse matrix format.
+        This is returned as a lower triangular matrix in sparse format.
         """
+
+        mat: pd.DataFrame = (
+            getattr(self, on) if isinstance(on, str)
+            else
+            on
+        )
+        # As dealing with W or H matrix, transpose so signatures are on the
+        # first axis
+        short_axis: int = int(mat.shape[0] > mat.shape[1])
+        is_short_sigs: bool = all(x in mat.axes[short_axis] for x in self.names)
+        if not is_short_sigs:
+            # Possible we have as many signatures as elements
+            # Check if the long axis is signatures
+            is_long_sigs: bool = (
+                all(x in mat.axes[abs(1-short_axis)] for x in
+                    self.names)
+            )
+            if not is_long_sigs:
+                raise ValueError("No axis in given matrix contains all "
+                                 "signatures")
+            short_axis = abs(1 - short_axis)
+        mat = mat if short_axis == 0 else mat.T
+
+        # Assign each column to it's max value
+        bmat_csr: sparse.csr_array = sparse.csr_array(
+            mat.apply(lambda x: x == x.max())
+        )
+
+        return sparse.tril(bmat_csr.T.dot(bmat_csr), format="csr")
 
     def discrete_signature_scale(
             self,
@@ -4453,3 +4643,55 @@ def _set_intersect_and_difference(
         lset.intersection(rset),
         rset.difference(lset)
     )
+
+def _cbar(
+        consensus_matrices: Iterable[sparse.sparray]
+) -> np.ndarray:
+    """Produce a mean consensus matrix from consensus matrices from multiple
+    decompositions.
+
+    For large studies (n=10k samples), holding all these nxn matrices in
+    memory is inefficient, so we permit passing a generator to this
+    function.
+
+    :param consensus_matrices: Consensus matrices in lower triangular sparse
+        format.
+    :returns: Lower triangular consensus matrix in numpy format
+    """
+
+    summed: Tuple[int, sparse.sparray] = reduce(
+        __c_add, enumerate(consensus_matrices))
+    c_bar: np.ndarray = summed[1].toarray() / (summed[0] + 1)
+    return c_bar
+
+def __c_add(
+        a: Tuple[int, sparse.sparray],
+        b: Tuple[int, sparse.sparray],
+) -> Tuple[int, sparse.sparray]:
+    """Add enumerated c matrices."""
+    if a is None:
+        return b[0], b[1].astype('int')
+    return b[0], a[1] + b[1].astype('int')
+
+def _cophenetic_correlation(
+        c_bar: np.ndarray
+) -> float:
+    """Calculate Cophenetic Correlation Coefficient (Brunet 2004).
+
+    Takes a mean consensus matrix, and calculate cophenetic correlation.
+    Performs clustering using scipys linkage method.
+    """
+    # The np.where() symmetrises the matrix, for only positive values.
+    dist: np.array = squareform(
+        1 - np.where(np.tri(*c_bar.shape, dtype=bool), c_bar, c_bar.T)
+    )
+    link = linkage(dist, method="average")
+    ccc, _ = cophenet(link, dist)
+    return ccc
+
+def _dispersion(
+        c_bar: np.ndarray
+) -> float:
+    """Calculate dispersion coefficient (Park 2007)."""
+    sym: np.ndarray = np.where(np.tri(*c_bar.shape, dtype=bool), c_bar, c_bar.T)
+    return np.sum(4 * ((c_bar - 0.5) * (c_bar - 0.5))) / (sym.shape[0] ** 2)
