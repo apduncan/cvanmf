@@ -9,6 +9,7 @@ import pandas as pd
 import pytest
 from click.testing import CliRunner
 
+import cvanmf.data.utils
 from cvanmf.denovo import Decomposition, NMFParameters
 from cvanmf.reapply import cli, _reapply_model
 from cvanmf import models
@@ -103,7 +104,7 @@ def test_validate_genus_table() -> None:
     # Run on some example data
     # We'll modify this dataset to trigger as many validation steps as possible
     # - transposed
-    transposed: pd.DataFrame = models.example_abundance().T
+    transposed: pd.DataFrame = cvanmf.data.utils.example_abundance().T
     # - rank identifiers (d__;p__ etc)
     transposed.columns = [f'd__{x}' for x in transposed.columns]
     # - numeric feature
@@ -147,7 +148,7 @@ def test_match_genera() -> None:
     is the bulk of work in reapplying Enterosignatures."""
 
     # Make test data to work with
-    abd: pd.DataFrame = models.example_abundance()
+    abd: pd.DataFrame = cvanmf.data.utils.example_abundance()
     w: pd.DataFrame = models.five_es().w
     # Make an arbitrary hard mapping
     mapping: Dict[str, str] = {
@@ -216,7 +217,7 @@ def test__reapply_model():
     """Test the internal reapply function. Most exposed reapply method are a
     wrapper around this."""
 
-    res = _reapply_model(y=models.example_abundance().iloc[:, :20],
+    res = _reapply_model(y=cvanmf.data.utils.example_abundance().iloc[:, :20],
                          w=models.five_es().w,
                          colors=None,
                          input_validation=validate_genus_table,

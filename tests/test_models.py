@@ -3,7 +3,8 @@ import numpy as np
 import pandas as pd
 
 from cvanmf.denovo import Decomposition
-from cvanmf.models import five_es, example_abundance, Signatures
+from cvanmf.models import five_es, Signatures
+from cvanmf.data.utils import example_abundance
 
 
 def test_five_es() -> None:

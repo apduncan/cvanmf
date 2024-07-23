@@ -11,6 +11,7 @@ import plotnine
 import pytest
 from click.testing import CliRunner
 
+import cvanmf.data.utils
 from cvanmf import models
 from cvanmf.denovo import BicvSplit, BicvFold, bicv, _cosine_similarity, \
     rank_selection, BicvResult, plot_rank_selection, decompose, NMFParameters, \
@@ -31,8 +32,8 @@ def pyplot_backend():
 def small_overlap_blocks(scope="session") -> pd.DataFrame:
     """Small overlapping block diagonal matrix with k=4, for use in testing
     de-novo methods."""
-    return models.synthetic_data(100, 100, 0.25, 3,
-                                 scale_lognormal_params=True)
+    return cvanmf.data.utils.synthetic_blocks(100, 100, 0.25, 3,
+                                              scale_lognormal_params=True).data
 
 
 @pytest.fixture
