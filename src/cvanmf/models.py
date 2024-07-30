@@ -1,8 +1,11 @@
 """Load existing Enterosignature models."""
+import logging
 from importlib.resources import files
 from typing import NamedTuple, List, Optional, Dict, Union
 
 import pandas as pd
+
+logger: logging.Logger = logging.getLogger(__name__)
 
 FIVE_ES_COLORS = {
     "ES_Bact": "#E69F00",
@@ -62,6 +65,12 @@ def five_es() -> Signatures:
         sep="\t",
         index_col=0
     )
+    citation: str = (
+        "Frioux, C. et al. Enterosignatures define common bacterial guilds in "
+        "the human gut microbiome. Cell Host & Microbe 31, 1111-1125.e6 ("
+        "2023). https://doi.org/10.1016/j.chom.2023.05.024")
+    logger.warning("If you use the 5ES model please cite %s",
+                   citation)
     from cvanmf import reapply
     return Signatures(w=w,
                       colors=FIVE_ES_COLORS,

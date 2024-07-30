@@ -1,16 +1,18 @@
 """Functions for dealing with example case study and synthetic data."""
 import itertools
+import logging
 import math
 import random
 import re
 from importlib.resources import files
 from pathlib import Path
-from typing import NamedTuple, Optional, Dict, Any, List, Union, Set
+from typing import NamedTuple, Optional, Dict, Any, List, Union, Set, Callable
 
 import numpy as np
 import numpy.random
 import pandas as pd
 
+logger: logging.Logger = logging.getLogger(__name__)
 
 class ExampleData(NamedTuple):
     """Example data with associated metadata, including citations and
