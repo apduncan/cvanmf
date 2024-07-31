@@ -11,13 +11,13 @@ python = "^3.10"
 scikit-learn = "^1.3.2"
 click = "^8.1.7"
 pandas = "^2.1.4"
-plotnine = "^0.12.4"
+plotnine = "^0.13"
 tqdm = "^4.66.1"
-patchworklib = "^0.6.3"
 pyyaml = "^6.0.1"
 setuptools = "^69.1.1"
 scikit-bio = "^0.6.0"
 kneed = "^0.8.5"
+marsilea = "^0.4.3"
 
 [tool.poetry.dev-dependencies]
 

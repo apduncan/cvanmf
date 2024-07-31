@@ -7,24 +7,18 @@ most flexible about parameter types. The other functions perform individual
 steps, which are useful if you want fine control of a given step, but
 probably not necessary for most uses.
 """
-import abc
 import logging
-import os
 import pathlib
 import re
-from collections import namedtuple
-from typing import (Any, Callable, Collection, Dict, Iterator, List, NamedTuple,
+from typing import (Collection, Dict, Iterator, List,
                     Optional, Set, Tuple, Union, Protocol)
 
 import click
 import numpy as np
 import pandas as pd
 from sklearn.decomposition import non_negative_factorization
-from sklearn.metrics.pairwise import cosine_similarity
 
 from cvanmf.models import Signatures
-
-# from cvanmf import models, denovo
 
 logger: logging.Logger = logging.getLogger(__name__)
 
@@ -304,8 +298,8 @@ def validate_genus_table(abd_tbl: pd.DataFrame,
     # Check the dimensions make sense
     if abd_tbl.shape[0] < 2 or abd_tbl.shape[1] < 2:
         logger.critical(
-            """Table has one or fewer columns or rows. Check delimiters and
-            newline formats are correct.""")
+            "Table has one or fewer columns or rows. Check delimiters and "
+            "newline formats are correct.")
         raise CVANMFException("Table incorrect format.")
 
     # Check that there were column names in the file. We're going to assume
@@ -314,8 +308,8 @@ def validate_genus_table(abd_tbl: pd.DataFrame,
     all_numeric: bool = all(map(lambda x: str(x).isnumeric(), abd_tbl.columns))
     if all_numeric:
         logger.error(
-            """Table appear to lack sample IDs in the first row. Add
-            sample IDs, or ensure all sample IDs are not numeric.""")
+            "Table appear to lack sample IDs in the first row. Add sample "
+            "IDs, or ensure all sample IDs are not numeric.")
         raise CVANMFException("Table lacks sample IDs in first row.")
 
     # Check that taxa are on rows. We'll do that by looking for "Bacteria;"
@@ -323,8 +317,8 @@ def validate_genus_table(abd_tbl: pd.DataFrame,
     count_bac: int = len(
         list(filter(lambda x: "BACTERIA;" in x.upper(), abd_tbl.columns)))
     if (count_bac / len(abd_tbl.columns)) > 0.2:
-        logger.warning("""Table appears to have taxa on columns, so we have
-                 transposed it.""")
+        logger.warning("Table appears to have taxa on columns, so we have "
+                       "transposed it.""")
         abd_tbl = abd_tbl.T
 
     # Remove ? from lineages, unknown should be blank
@@ -336,8 +330,8 @@ def validate_genus_table(abd_tbl: pd.DataFrame,
                                    abd_tbl.index[:10]))
     if rank_indicated:
         logger.info(
-            """Taxa names appear to contain rank indicators (i.e k__, p__),
-            these have been removed to match Enterosignature format.""")
+            "Taxa names appear to contain rank indicators (i.e k__, p__), "
+            "these have been removed to match Enterosignature format.""")
         abd_tbl.index = map(
             lambda x: re.sub(RE_RANK, "", x),
             abd_tbl.index

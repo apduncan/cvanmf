@@ -174,7 +174,7 @@ profiles {
 
 Replace the queue names with the queues specific to your HPC setup. To use 
 `conda`, remove `conda.useMicromamba`. To use `mamba`, replace 
-`conda.useMicromamba`w ith `conda.useMamba`
+`conda.useMicromamba` with `conda.useMamba`
 
 The pipeline can now be run using
 
@@ -259,8 +259,8 @@ Find the path of the environment
 cvapipe                    /some/path/mambaforge/envs/cvapipe
 ```
 
-In the config file with your slurm profile, provide the path to the conda 
-environment
+In the config file with your slurm (other other scheduler) profile, provide the 
+path to the conda environment
 
 ```
 profiles {
@@ -322,7 +322,7 @@ for that purpose.
 * `max_iter`: Maximum number of update iterations during NMF decompositions. 
   Will be terminated earlier if reaching convergence. Defaults to 3000.
 * `seed`: Random seed for reproducible results. Defaults to 4298. 
-* `init`: Method to seed the $H$ and $H$ matrices during decomposition. Can 
+* `init`: Method to seed the $H$ and $W$ matrices during decomposition. Can 
   be either "random" or "nndsvdar". See the 
   [sklearn NMF documentation](https://scikit-learn.org/stable/modules/generated/sklearn.decomposition.NMF.html)
   for more on these methods.
