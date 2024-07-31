@@ -994,7 +994,7 @@ def plot_rank_selection(results: Dict[Union[int, float], List[BicvResult]],
                              **geom_params)
             + plotnine.xlab(xaxis)
             + plotnine.ylab("Value")
-            + plotnine.scale_fill_discrete(guide=False)
+            + plotnine.guides(fill=None)
     )
 
     # Add automated rank suggestion
@@ -3662,8 +3662,8 @@ class Decomposition:
                     )
                 ) +
                 plotnine.geom_boxplot(**boxplot_params) +
-                plotnine.facet_grid(["signature", "metadata_field"],
-                                    scales="free_x", space=disc_spacing) +
+                plotnine.facet_grid(rows="signature", cols="metadata_field",
+                                    scales="free_x", space="free_x") +
                 plotnine.ylab("Signature Weight") +
                 plotnine.xlab("Metadata Value") +
                 plotnine.guides(fill=plotnine.guide_legend(title="Signature")) +
