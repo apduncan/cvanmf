@@ -1,6 +1,5 @@
 """Tests for denovo ES generation."""
 import itertools
-import logging
 import pathlib
 import re
 from typing import List, Dict, Iterable, Tuple, Set, Optional
@@ -500,35 +499,6 @@ def test_plot_relative_weight(
         tmp_path: pathlib.Path,
         small_decomposition
 ):
-    matplotlib.pyplot.switch_backend("Agg")
-    # Want to plot a category with it
-    rnd_cat: pd.Series = pd.Series(
-        np.random.choice(["A", "B"], size=small_decomposition.h.shape[1]),
-        index=small_decomposition.h.columns
-    )
-    # Add a sample that is not in the decomposition
-    rnd_cat.loc['dn3259nfn'] = 'C'
-    # Remove one sample that should be there
-    rnd_cat = rnd_cat.drop(index=[rnd_cat.index[0]])
-    plt = small_decomposition.plot_relative_weight(
-        group=rnd_cat,
-        model_fit=True,
-        heights=dict(ribbon=2, bar=2, nonsense=2),
-        sample_label_size=3.0,
-        legend_cols_h=2,
-        legend_cols_v=2,
-    )
-    pth = (tmp_path / "test_rank_sel.png")
-    plt.savefig(pth)
-    # Test that the file exists and isn't empty
-    assert pth.exists(), "Plot file not created"
-    assert pth.stat().st_size > 0, "Plot file is empty"
-
-def test_plot_relative_weight2(
-        tmp_path: pathlib.Path,
-        small_decomposition
-):
-    matplotlib.pyplot.switch_backend("Agg")
     # Want to plot a category with it
     rnd_cat: pd.Series = pd.Series(
         np.random.choice(["A", "B"], size=small_decomposition.h.shape[1]),
@@ -539,7 +509,7 @@ def test_plot_relative_weight2(
     # Remove one sample that should be there
     rnd_cat = rnd_cat.drop(index=[rnd_cat.index[0]])
     rnd_cat.name = "Category"
-    plt = small_decomposition.plot_relative_weight2(
+    plt = small_decomposition.plot_relative_weight(
         group=rnd_cat,
         model_fit=True,
         heights=dict(ribbon=0.2, bar=0.8, labels=0.4),
@@ -549,8 +519,6 @@ def test_plot_relative_weight2(
     )
     pth = (tmp_path / "test_rank_sel.pdf")
     plt.save(pth)
-    import os
-    os.system(f"open {pth}")
     # Test that the file exists and isn't empty
     assert pth.exists(), "Plot file not created"
     assert pth.stat().st_size > 0, "Plot file is empty"

@@ -38,10 +38,10 @@ from typing import (Optional, NamedTuple, List, Iterable, Union, Tuple, Set,
                     Any, Dict, Callable, Literal, Hashable, Generator)
 
 import click
+import marsilea
 import matplotlib.figure
 import numpy as np
 import pandas as pd
-import patchworklib as pw
 import plotnine
 import yaml
 from kneed import KneeLocator
@@ -3020,7 +3020,7 @@ class Decomposition:
                    ))
         return plt
 
-    def plot_relative_weight2(
+    def plot_relative_weight(
             self,
             group: Optional[Union[pd.Series]] = None,
             model_fit: bool = True,
@@ -3154,260 +3154,11 @@ class Decomposition:
                 rel_df.columns,
                 fontsize=sample_label_size
             )
-            wb.add_bottom(labels, size=heights['labels'])
+            wb.add_bottom(labels, size=heights['label'])
 
         wb.add_legends(side=legend_side)
         return wb
 
-
-    def plot_relative_weight(
-            self,
-            group: Optional[Union[pd.Series, Iterable]] = None,
-            model_fit: bool = True,
-            heights: Union[Dict[str, float], Iterable[float]] = None,
-            width: float = 6.0,
-            sample_label_size: float = 5.0,
-            legend_cols_h: int = 8,
-            legend_cols_v: int = 1,
-            **kwargs
-    ) -> Union[plotnine.ggplot, pw.Bricks]:
-        """Plot relative weight of each signature in each sample.
-
-        Plots a stacked bar chart with a bar for each sample displaying the
-        relative weight of each signature. Optionally the plot can also
-        include a section at the top summarising the model fit for each
-        sample, and a ribbon along the bottom display categorical metadata
-        for samples.
-
-        This uses patchworklib for putting together multiple plotnine plots,
-        so when adding either top or bottom element will return a Bricks item.
-        Patchworklib can be slow for large plots.
-
-        :param group: Categorical metadata for each sample to plot on ribbon
-            at the bottom
-        :param model_fit: Include a top row indicating model fit per sample
-        :param heights: Height in inches for each component of the plot. Only
-            used when including model fit or ribbon. Specify as a dictionary
-            with keys 'dot', 'bar', or 'ribbon', or a list with heights for
-            the elements included from top to bottom.
-        :param width: Width used when combining multiple elements
-        :param sample_label_size: Size for sample labels. Set to 0 to remove
-            sample labels.
-        :return: A plotnine ggplot or patchwork Bricks object
-        """
-
-        # Parse height arguments
-        if heights is not None:
-            if isinstance(heights, dict):
-                unex_keys: Set[str] = (
-                    set(heights.keys())
-                    .difference(DEF_RELATIVE_WEIGHT_HEIGHTS.keys())
-                )
-                if len(unex_keys) > 0:
-                    logger.warning(
-                        "Unexpected key(s) in heights: %s. Expecting: %s.",
-                        heights.keys(),
-                        DEF_RELATIVE_WEIGHT_HEIGHTS.keys()
-                    )
-            else:
-                parts: List[str] = [x for x in [
-                    'dot' if model_fit else None,
-                    'bar',
-                    'ribbon' if group is not None else None
-                    ] if x is not None]
-                vals: List[float] = list(heights)
-                if len(parts) != len(vals):
-                    logger.warning(
-                        "Passed %s heights when plot has %s parts (%s)",
-                        len(vals),
-                        len(parts),
-                        parts
-                    )
-                m: int = min(map(len, (parts, vals)))
-                vals, parts = vals[:m], parts[:m]
-                heights = dict(zip(parts, vals))
-        else:
-            heights = {}
-        heights = DEF_RELATIVE_WEIGHT_HEIGHTS | heights
-
-        rel_df: pd.DataFrame = (
-            self.scaled('h')
-            .T
-            .stack()
-            .to_frame("weight")
-            .reset_index(names=["sample", "signature"])
-        )
-        # Plotnine by default sorts categorical axis labels. Want to retain the
-        # sample ordering provide, as there is likely some sensible structure in
-        # how the user arranged them.
-        ordered_scale: plotnine.scale_x_discrete = plotnine.scale_x_discrete(
-            limits=rel_df['sample']
-        )
-        plt: plotnine.ggplot = (
-                plotnine.ggplot(
-                    rel_df,
-                    plotnine.aes(x="sample", y="weight", fill="signature")
-                ) +
-                plotnine.geom_col(
-                    position="stack",
-                    stat="identity"
-                ) +
-                plotnine.xlab("Sample") +
-                plotnine.ylab("Relative Weight") +
-                self.fill_scale +
-                plotnine.theme(axis_text_x=plotnine.element_text(angle=90),
-                               legend_position="right",
-                               legend_title_align="center") +
-                plotnine.guides(fill=plotnine.guide_legend(
-                    ncol=legend_cols_v, order=2)) +
-                ordered_scale
-        )
-        # There are two optional components to this plot, a point indicating
-        # model fit, and a ribbon indicating category membership. These are
-        # made separately and then patchworked together. The plot object are
-        # initialised to None, and set to a ggplot if requested
-        plt_ribbon: Optional[plotnine.ggplot] = None
-        plt_mfp: Optional[plotnine.ggplot] = None
-        small_yaxis_lbls: plotnine.theme = plotnine.theme(
-            axis_text_y=plotnine.element_text(size=5),
-            axis_title_y=plotnine.element_text(size=7)
-        )
-        small_xaxis_lbls: plotnine.theme = plotnine.theme(
-            axis_text_x=plotnine.element_text(size=sample_label_size),
-        )
-        if sample_label_size <= 0.0:
-            small_xaxis_lbls = plotnine.theme(
-                axis_text_x=plotnine.element_blank(),
-                axis_ticks_minor_x=plotnine.element_blank(),
-                axis_ticks_major_x=plotnine.element_blank()
-            )
-
-        # Display categorical grouping as geom_col - similar to the ribbon in
-        # seaborn. Make as a separate figure and put together with patchworklib
-        if group is not None:
-            if not isinstance(group, pd.Series):
-                group = pd.Series(group, index=self.h.columns)
-            group_df: pd.DataFrame = (
-                group
-                .to_frame("group")
-                .reset_index(names=["sample"])
-            )
-            # Restrict to only the entries in the decomposition. Warn if
-            # any lost from either metadata, or sample lacking metadata
-            md_only, shared, decomp_only = _set_intersect_and_difference(
-                group_df['sample'], self.h.columns
-            )
-            # Warn if any mismatches
-            if len(md_only) > 0:
-                logger.warning(
-                    "Metadata for %s samples had no match in decomposition. "
-                    "Check indices if you were expecting all to match.",
-                    len(md_only)
-                )
-            if len(decomp_only) > 0:
-                group_df = pd.concat(
-                    [group_df,
-                     pd.DataFrame(
-                         [(x, np.nan) for x in decomp_only],
-                         columns=['sample', 'group']
-                     )]
-                )
-                logger.warning(
-                    "%s samples in decomposition had no metadata, has been "
-                    "filled with NaN. Check indices if you were expecting all "
-                    "to match", len(decomp_only)
-                )
-            group_df = group_df.loc[group_df['sample'].isin(self.h.columns)]
-
-            # Log if any entries dropped from metadata
-            # Sort primarily by group, but beyond that retain input ordering
-            group_df['input_order'] = range(group_df.shape[0])
-            group_df = group_df.sort_values(by=['group', 'input_order'],
-                                            ascending=[True, True])
-            # Replace the input ordering to group instead by
-            ordered_scale: plotnine.scale_x_discrete = (
-                plotnine.scale_x_discrete(limits=group_df['sample'])
-            )
-            plt_ribbon: plotnine.ggplot = (
-                    plotnine.ggplot(group_df,
-                                    mapping=plotnine.aes(
-                                        x="sample",
-                                        fill="group"
-                                    )) +
-                    plotnine.geom_col(
-                        mapping=plotnine.aes(y=1.0),
-                        width=1.0
-                    ) +
-                    plotnine.scale_fill_discrete(name="Group") +
-                    ordered_scale +
-                    plotnine.xlab("") +
-                    plotnine.ylab("") +
-                    plotnine.theme(axis_text_x=plotnine.element_text(angle=90),
-                                   axis_text_y=plotnine.element_blank(),
-                                   axis_ticks_minor_x=plotnine.element_blank(),
-                                   axis_ticks_minor_y=plotnine.element_blank(),
-                                   axis_ticks_major_y=plotnine.element_blank(),
-                                   legend_position="bottom"
-                                   ) +
-                    plotnine.guides(
-                        fill=plotnine.guide_legend(
-                            ncol=legend_cols_h,
-                            order=1
-                        )
-                    )
-            )
-        if model_fit:
-            plt_mfp = self.plot_modelfit_point(**kwargs)
-            # Remove x-labels and legend
-            plt_mfp = (
-                    plt_mfp +
-                    plotnine.theme(axis_title_x=plotnine.element_blank(),
-                                   axis_ticks_minor_x=plotnine.element_blank(),
-                                   axis_ticks_major_y=plotnine.element_blank(),
-                                   axis_text_x=plotnine.element_blank()) +
-                    plotnine.guides(color=None) +
-                    small_yaxis_lbls
-            )
-            if ordered_scale is not None:
-                plt_mfp = plt_mfp + ordered_scale
-
-        if any(x is not None for x in (plt_mfp, plt_ribbon)):
-            plt = plt + small_xaxis_lbls + small_yaxis_lbls
-            # Compose all the requested elements used patchworklib
-            if plt_ribbon is not None:
-                # Remove the x-axis text from the weight plot
-                plt = (
-                        plt +
-                        plotnine.theme(
-                            axis_text_x=plotnine.element_blank(),
-                            axis_ticks_major_x=plotnine.element_blank(),
-                            axis_ticks_minor_x=plotnine.element_blank(),
-                            axis_title_x=plotnine.element_blank()
-                        ) +
-                        ordered_scale
-                )
-                plt_ribbon = plt_ribbon + small_xaxis_lbls
-            h_dot, h_bar, h_ribbon = (heights['dot'], heights['bar'],
-                                      heights['ribbon'])
-            stack: List = [
-                (pw.load_ggplot(plt_mfp, figsize=(width, h_dot))
-                 if plt_mfp is not None else None),
-                pw.load_ggplot(plt, figsize=(width, h_bar)),
-                (pw.load_ggplot(plt_ribbon, figsize=(width, h_ribbon))
-                 if plt_ribbon is not None else None)
-            ]
-            stack = [x for x in stack[::-1] if x is not None]
-            plt_stack: Optional[pw.Bricks] = None
-            for i in range(1, len(stack)):
-                plt_stack = pw.vstack(
-                    stack[0] if plt_stack is None else plt_stack,
-                    stack[i],
-                    adjust_height=False,
-                    direction="t",
-                    margin="none")
-            return plt_stack
-        else:
-            return plt
 
     def pcoa(self,
              on: Union[
@@ -4127,11 +3878,14 @@ class Decomposition:
                 continue
             try:
                 plt_obj: Union[
-                    plotnine.ggplot, matplotlib.figure.Figure, pw.Bricks] = (
+                    plotnine.ggplot, matplotlib.figure.Figure,
+                    marsilea.WhiteBoard] = (
                     getattr(self, plot_fn)()
                 )
 
                 if isinstance(plt_obj, plotnine.ggplot):
+                    plt_obj.save(plt_path.with_suffix(".pdf"))
+                elif isinstance(plt_obj, marsilea.WhiteBoard):
                     plt_obj.save(plt_path.with_suffix(".pdf"))
                 else:
                     plt_obj.savefig(plt_path.with_suffix(".pdf"))
