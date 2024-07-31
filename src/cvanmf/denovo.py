@@ -23,7 +23,6 @@ and visualisation and analysis are carried out using object methods (such as
 from __future__ import annotations
 
 import collections
-import glob
 import hashlib
 import inspect
 import itertools
@@ -34,7 +33,7 @@ import pathlib
 import re
 import shutil
 import tarfile
-from functools import cached_property, reduce
+from functools import reduce
 from typing import (Optional, NamedTuple, List, Iterable, Union, Tuple, Set,
                     Any, Dict, Callable, Literal, Hashable, Generator)
 
@@ -42,7 +41,6 @@ import click
 import matplotlib.figure
 import numpy as np
 import pandas as pd
-import patchworklib
 import patchworklib as pw
 import plotnine
 import yaml
@@ -51,7 +49,6 @@ from scipy import sparse
 from scipy.cluster.hierarchy import linkage, cophenet
 from scipy.spatial.distance import pdist, squareform
 from skbio import OrdinationResults
-from sklearn import manifold
 from sklearn.decomposition import NMF, non_negative_factorization
 from sklearn.decomposition._nmf import _beta_divergence
 from sklearn.metrics.pairwise import cosine_similarity
@@ -59,6 +56,9 @@ from tqdm import tqdm
 
 from cvanmf.reapply import InputValidation, FeatureMatch, _reapply_model
 
+# Initialise logger
+logger: logging.Logger = logging.getLogger(__name__)
+"""Logger object."""
 # from cvanmf import reapply
 
 # Type aliases
@@ -323,7 +323,7 @@ class BicvSplit:
                 split.i = i
             split.save_npz(path=path, compress=compress, force=force)
             num_splits = i
-        logging.info("%s shuffles saved to %s", num_splits, path)
+        logger.info("%s shuffles saved to %s", num_splits+1, path)
 
     @staticmethod
     def load_npz(path: pathlib.Path,
@@ -376,7 +376,7 @@ class BicvSplit:
             else
             pathlib.Path(path)
         )
-        logging.info("Loading shuffles from %s", str(npz_pth))
+        logger.info("Loading shuffles from %s", str(npz_pth))
         for i, file in enumerate(npz_pth.glob("*.npz")):
             shuffle: BicvSplit = BicvSplit.load_npz(path=pathlib.Path(file),
                                                     allow_pickle=allow_pickle)
@@ -399,7 +399,7 @@ class BicvSplit:
         :returns: A generator of  splits, as BicvSplit objects
         """
         rnd: np.random.Generator = np.random.default_rng(random_state)
-        logging.info(
+        logger.info(
             "Generating %s splits with state %s", str(n), str(rnd))
 
         shuffles: Iterable[pd.DataFrame] = (
@@ -804,7 +804,7 @@ def rank_selection(x: pd.DataFrame,
     # world of should. Currently deciding to warn user and still return
     # results.
     if len(set(len(y) for y in grouped_results.values())) != 1:
-        logging.error(("Uneven number of results returned for each rank, "
+        logger.error(("Uneven number of results returned for each rank, "
                        "some rank selection iterations may have failed."))
 
     return grouped_results
@@ -1181,7 +1181,7 @@ def regu_selection(x: pd.DataFrame,
     # world of should. Currently deciding to warn user and still return
     # results.
     if len(set(len(y) for y in grouped_results.values())) != 1:
-        logging.error(("Uneven number of results returned for each rank, "
+        logger.error(("Uneven number of results returned for each rank, "
                        "some rank selection iterations may have failed."))
     # Determine the selected regularisation parameter based on criteria from
     # the Enterosignatures paper
@@ -1284,7 +1284,8 @@ def bicv(params: Optional[NMFParameters] = None, **kwargs) -> BicvResult:
                                      )
 
     # Combine results from each fold
-    logging.info("Starting bi-cross validation")
+    logger.info("Starting bi-cross validation; rank %s; alpha %s",
+                params.rank, params.alpha)
     joined: BicvResult = BicvResult.join_folds(list(runs))
     return joined
 
@@ -1301,8 +1302,10 @@ def __bicv_single(params: NMFParameters, fold: BicvFold) -> BicvResult:
     rng: np.random.Generator = np.random.default_rng(params.seed)
     decomp_seeds: np.ndarray = rng.integers(0, 4294967295, 3)
 
-    logging.info("Starting")
+    logger.debug("Starting fold %s; alpha=%s; rank=%s",
+                id(fold), params.alpha, params.rank)
 
+    logger.debug("Start Bicv step 1")
     model_D: NMF = NMF(n_components=params.rank,
                        init=params.init,
                        verbose=False,
@@ -1316,10 +1319,12 @@ def __bicv_single(params: NMFParameters, fold: BicvFold) -> BicvResult:
 
     H_d: np.ndarray = np.transpose(model_D.fit_transform(np.transpose(fold.D)))
     W_d: np.ndarray = np.transpose(model_D.components_)
+    logger.debug("Completed Bicv step 1")
 
     # step 2, get W_a using M_b
     # Use the function rather than object interface, as has some convenience
     # for using only one fixed initialisation
+    logger.debug("Starting Bicv step 2")
     W_a, H_d_t, _ = non_negative_factorization(
         fold.B,
         n_components=params.rank,
@@ -1335,8 +1340,10 @@ def __bicv_single(params: NMFParameters, fold: BicvFold) -> BicvResult:
         update_H=False,
         H=H_d
     )
+    logger.debug("Completed Bicv step 2")
 
     # Step 3, get H_a using M_c
+    logger.debug("Starting Bicv step 3")
     H_a, W_d_t, _ = non_negative_factorization(
         fold.C.T,
         n_components=params.rank,
@@ -1352,8 +1359,10 @@ def __bicv_single(params: NMFParameters, fold: BicvFold) -> BicvResult:
         update_H=False,
         H=W_d.T
     )
+    logger.debug("Completed Bicv step 3")
 
     # Step 4, calculate error for M_a
+    logger.debug("Calculating quality measures for fold")
     Ma_calc = np.dot(W_a, H_a.T)
 
     return BicvResult(
@@ -1604,14 +1613,14 @@ def _write_symlink(path: pathlib.Path,
     linked: bool = False
     if symlink and target is not None:
         if target.is_file():
-            logging.debug("Attempting to symlink %s -> %s", path, target)
+            logger.debug("Attempting to symlink %s -> %s", path, target)
             try:
                 path.symlink_to(target.resolve())
                 linked: bool = True
             except Exception as e:
-                logging.debug("Failed to create symlink %s -> %s", path, target)
+                logger.debug("Failed to create symlink %s -> %s", path, target)
     if not linked:
-        logging.debug("Writing to %s", target)
+        logger.debug("Writing to %s", target)
         save_fn(path)
 
 
@@ -1749,7 +1758,7 @@ def cli_rank_selection(
     rank_min, rank_max = min(rank_min, rank_max), max(rank_min, rank_max)
     ranks: List[int] = list(range(rank_min, rank_max, rank_step))
     if len(ranks) < 2:
-        logging.fatal(("Must search 2 or more ranks; ranks provided were "
+        logger.fatal(("Must search 2 or more ranks; ranks provided were "
                        "%s"), str(ranks))
         return None
 
@@ -1757,13 +1766,13 @@ def cli_rank_selection(
     x: pd.DataFrame = pd.read_csv(input, delimiter=delimiter, index_col=0)
     # Check reasonable dimensions
     if x.shape[0] < 2 or x.shape[1] < 2:
-        logging.fatal("Loaded matrix invalid shape: (%s)", x.shape)
+        logger.fatal("Loaded matrix invalid shape: (%s)", x.shape)
         return
     # TODO: Check all columns numeric
 
     # Log params being used
     param_str: str = (
-        f"Data Locations\n"
+        f"\nData Locations\n"
         f"------------------------------\n"
         f"Input:            {input}\n"
         f"Output:           {output_dir}\n"
@@ -1779,7 +1788,8 @@ def cli_rank_selection(
         f"Beta Loss:        {beta_loss}\n"
         f"Initialisation:   {init}\n"
     )
-    logging.info(param_str)
+    logger.info("cvanmf rank selection")
+    logger.info(param_str)
 
     # Perform rank selection
     results: Dict[int, List[BicvResult]] = rank_selection(
@@ -1798,12 +1808,12 @@ def cli_rank_selection(
     rank_tbl: pd.DataFrame = BicvResult.results_to_table(results)
     rank_plt: plotnine.ggplot = plot_rank_selection(results)
     out_path: pathlib.Path = pathlib.Path(output_dir)
-    logging.info("Writing results to %s", str(out_path))
+    logger.info("Writing results to %s", str(out_path))
     rank_tbl.to_csv(str(out_path / "rank_selection.tsv"), sep=delimiter)
     rank_plt.save(out_path / "rank_selection.pdf")
 
     # Completion
-    logging.info("Rank selection completed")
+    logger.info("Rank selection completed")
 
 
 @click.command()
@@ -1944,7 +1954,7 @@ def cli_regu_selection(
     # Validate parameters
     alphas: List[float] = __alpha_values(alpha)
     if len(alphas) < 2:
-        logging.fatal(("Must search 2 or more alphas; alphas provided were "
+        logger.fatal(("Must search 2 or more alphas; alphas provided were "
                        "%s"), str(alphas))
         return None
 
@@ -1952,13 +1962,14 @@ def cli_regu_selection(
     x: pd.DataFrame = pd.read_csv(input, delimiter=delimiter, index_col=0)
     # Check reasonable dimensions
     if x.shape[0] < 2 or x.shape[1] < 2:
-        logging.fatal("Loaded matrix invalid shape: (%s)", x.shape)
+        logger.fatal("Loaded matrix invalid shape: (%s)", x.shape)
         return
     # TODO: Check all columns numeric
 
+    logger.info("cvanmf regularisation selection")
     # Log params being used
     param_str: str = (
-        f"Data Locations\n"
+        f"\nData Locations\n"
         f"------------------------------\n"
         f"Input:            {input}\n"
         f"Output:           {output_dir}\n"
@@ -1975,7 +1986,7 @@ def cli_regu_selection(
         f"Initialisation:   {init}\n"
         f"Scale Regu:       {scale}"
     )
-    logging.info(param_str)
+    logger.info(param_str)
 
     # Perform rank selection
     best_alpha: float
@@ -1997,12 +2008,12 @@ def cli_regu_selection(
     regu_tbl: pd.DataFrame = BicvResult.results_to_table(results)
     regu_plt: plotnine.ggplot = plot_regu_selection(results)
     out_path: pathlib.Path = pathlib.Path(output_dir)
-    logging.info("Writing results to %s", str(out_path))
+    logger.info("Writing results to %s", str(out_path))
     regu_tbl.to_csv(str(out_path / "regu_selection.tsv"), sep=delimiter)
     regu_plt.save(out_path / "regu_selection.pdf")
 
     # Completion
-    logging.info("Regularisation selection completed")
+    logger.info("Regularisation selection completed")
 
 def decompositions(
         x: pd.DataFrame,
@@ -2075,7 +2086,7 @@ def decompositions(
 
     # Only one pe rank with deterministic intialisations
     if init not in {"random", "nndsvdar"}:
-        logging.info("Using deterministic initialisation; only a single"
+        logger.info("Using deterministic initialisation; only a single"
                      "result will be returned for each rank.")
         random_starts = 1
 
@@ -2538,19 +2549,19 @@ class Decomposition:
                     sig_idx: int = self.names.index(signature)
                     self.__colors[sig_idx] = color
                 except IndexError as e:
-                    logging.info("Unable to set color for %s, signature"
+                    logger.info("Unable to set color for %s, signature"
                                  "not found", signature)
         elif colors is None:
             self.__colors = self.__default_colors(self.parameters.rank)
         else:
             color_list: List[str] = list(colors)
             if len(color_list) < self.parameters.rank:
-                logging.info("Fewer colors than signature provided. Given %s, "
+                logger.info("Fewer colors than signature provided. Given %s, "
                              "expected %s", len(color_list),
                              self.parameters.rank)
                 self.__colors[:len(color_list)] = color_list
             elif len(color_list) > self.parameters.rank:
-                logging.info("More colors than signatures provided. Given %s, "
+                logger.info("More colors than signatures provided. Given %s, "
                              "expected %s", len(color_list),
                              self.parameters.rank)
                 self.__colors = color_list[:self.parameters.rank]
@@ -2716,7 +2727,7 @@ class Decomposition:
 
         if by is None:
             by = "sample" if is_h else "signature"
-            logging.info("Using default scaling for matrix (by %s)",
+            logger.info("Using default scaling for matrix (by %s)",
                          by)
         # Warn if attempting to normalise H by feature, or W by sample
         if by.lower() not in {'feature', 'sample', 'signature'}:
@@ -2725,12 +2736,12 @@ class Decomposition:
                 f"given {by}"
             )
         if is_h and by == "feature":
-            logging.warning("H matrix is sample matrix (signatures x samples), "
+            logger.warning("H matrix is sample matrix (signatures x samples), "
                             "cannot scale by feature. Scaling by sample "
                             "instead")
             by = "sample"
         if not is_h and by == "sample":
-            logging.warning("W matrix is feature matrix (features x "
+            logger.warning("W matrix is feature matrix (features x "
                             "signatures), cannot scale by sample. Scaling by "
                             "signature instead")
             by = "signature"
@@ -3193,7 +3204,7 @@ class Decomposition:
                     .difference(DEF_RELATIVE_WEIGHT_HEIGHTS.keys())
                 )
                 if len(unex_keys) > 0:
-                    logging.warning(
+                    logger.warning(
                         "Unexpected key(s) in heights: %s. Expecting: %s.",
                         heights.keys(),
                         DEF_RELATIVE_WEIGHT_HEIGHTS.keys()
@@ -3206,7 +3217,7 @@ class Decomposition:
                     ] if x is not None]
                 vals: List[float] = list(heights)
                 if len(parts) != len(vals):
-                    logging.warning(
+                    logger.warning(
                         "Passed %s heights when plot has %s parts (%s)",
                         len(vals),
                         len(parts),
@@ -3288,7 +3299,7 @@ class Decomposition:
             )
             # Warn if any mismatches
             if len(md_only) > 0:
-                logging.warning(
+                logger.warning(
                     "Metadata for %s samples had no match in decomposition. "
                     "Check indices if you were expecting all to match.",
                     len(md_only)
@@ -3301,7 +3312,7 @@ class Decomposition:
                          columns=['sample', 'group']
                      )]
                 )
-                logging.warning(
+                logger.warning(
                     "%s samples in decomposition had no metadata, has been "
                     "filled with NaN. Check indices if you were expecting all "
                     "to match", len(decomp_only)
@@ -4058,7 +4069,7 @@ class Decomposition:
         ."""
 
         out_dir = pathlib.Path(out_dir)
-        logging.debug("Create decomposition output dir: %s", out_dir)
+        logger.debug("Create decomposition output dir: %s", out_dir)
         out_dir.mkdir(parents=True, exist_ok=False)
 
         # Output tables
@@ -4072,7 +4083,7 @@ class Decomposition:
                  (self.scaled('h'), "h_scaled.tsv"),
                  (self.scaled('w'), "w_scaled.tsv")]
         ):
-            logging.debug("Write decomposition table: %s", out_dir / fname)
+            logger.debug("Write decomposition table: %s", out_dir / fname)
             df: Union[pd.Series, pd.DataFrame] = (
                 getattr(self, tbl) if isinstance(tbl, str) else tbl
             )
@@ -4110,7 +4121,7 @@ class Decomposition:
         # Attempt to output default plots
         for plot_fn in self.__plots_to_save(plot=plots):
             plt_path: pathlib.Path = out_dir / plot_fn
-            logging.debug("Write decomposition plot: %s", plt_path)
+            logger.debug("Write decomposition plot: %s", plt_path)
             if plot_fn == "plot_metadata":
                 # Requires a metadata object, so skip
                 continue
@@ -4126,7 +4137,7 @@ class Decomposition:
                     plt_obj.savefig(plt_path.with_suffix(".pdf"))
             except Exception as e:
                 # TODO: This is not a great pattern, refine exception catching
-                logging.warning("Failed to save plot %s (%s)",
+                logger.warning("Failed to save plot %s (%s)",
                                 plt_path, str(e))
 
         # Compress if requested
@@ -4156,7 +4167,7 @@ class Decomposition:
         # Default behaviour is to not make plots with all samples in the
         # case that there are lot of samples
         if self.h.shape[1] > self.DEF_PLOT_SAMPLE_LIMIT:
-            logging.warning(
+            logger.warning(
                 ("More than %s samples; will not save plots with points for "
                  "each sample by default (%s). To force these plots to be "
                  "saved, pass plot=True to save()."),
@@ -4239,7 +4250,7 @@ class Decomposition:
         if xtn == "yaml":
             res_obj = yaml.safe_load(stream)
         else:
-            logging.debug("Ignored file %s due to extension", name)
+            logger.debug("Ignored file %s due to extension", name)
         stream.close()
         return res_obj
 
@@ -4330,7 +4341,7 @@ class Decomposition:
 
         # Feature mapping will not exist for de-novo decompositions
         if "feature_mapping.tsv" in data:
-            logging.warning(
+            logger.warning(
                 "Feature mappings are present, but are not currently read when loading "
                 "a decomposition from disk")
             # TODO: Make GenusMapping object from table
@@ -4432,7 +4443,7 @@ class Decomposition:
             return next(x for x in Decomposition.DEF_SCALES
                         if n <= len(x))[:n]
         else:
-            logging.warning("Some colours are duplicated when plotting over 20 "
+            logger.warning("Some colours are duplicated when plotting over 20 "
                             "signatures")
             return (
                 (Decomposition.DEF_SCALES[-1] *
@@ -4605,7 +4616,7 @@ def cli_decompose(
     output_path: pathlib.Path = pathlib.Path(output_dir)
     if output_path.is_dir():
         if len(list(output_path.iterdir())) > 0:
-            logging.fatal("Output directory %s must be empty",
+            logger.fatal("Output directory %s must be empty",
                           output_path)
         return
     if not output_path.exists():
@@ -4637,7 +4648,7 @@ def cli_decompose(
         f"Beta Loss:        {beta_loss}\n"
         f"Initialisation:   {init}\n"
     )
-    logging.info(param_str)
+    logger.info(param_str)
 
     # Write parameters to output directory. Also ensures we have write access
     # before engaging in expensive computation.
@@ -4658,11 +4669,11 @@ def cli_decompose(
                 init=init
             ), f)
     except Exception as e:
-        logging.fatal("Unable to write to output directory")
+        logger.fatal("Unable to write to output directory")
         return
 
     # Make decompositions
-    logging.info("Beginning decompositions")
+    logger.info("Beginning decompositions")
     decomps: Dict[int, List[Decomposition]] = decompositions(
         x=x,
         ranks=ranks,
@@ -4677,55 +4688,49 @@ def cli_decompose(
         init=init,
         progress_bar=progress
     )
-    logging.info("Decomposition complete")
+    logger.info("Decomposition complete")
 
     # Write decompositions
-    logging.info("Write decompositions to %s", output_path)
+    logger.info("Write decompositions to %s", output_path)
     Decomposition.save_decompositions(decomps,
                                       output_dir=output_path,
                                       symlink=symlink,
                                       delim=delimiter,
                                       compress=compress)
-    logging.info("Decomposition completed")
+    logger.info("Decomposition completed")
 
 
 def __configure_logger(verbosity: str) -> None:
     """Set logging format and level for CLI. Verbosity should be warning,
     info, or debug."""
 
-    # TODO: This is setting for all imported modules as well, fix logging
     log_level: int = logging.WARNING
     match verbosity:
         case "debug":
             log_level = logging.DEBUG
         case "info":
             log_level = logging.INFO
-    logging.basicConfig(
-        format='%(levelname)s [%(asctime)s]: %(message)s',
-        datefmt='%d/%m/%Y %I:%M:%S',
-        level=log_level,
-        force=True
-    )
+    logger.setLevel(log_level)
 
 
 def __validate_input_matrix(x: pd.DataFrame) -> None:
     """Check input matrix has sensible format and values."""
     # Check shape
     if x.shape[0] < 2 or x.shape[1] < 2:
-        logging.fatal("Loaded matrix invalid shape: (%s)", x.shape)
+        logger.fatal("Loaded matrix invalid shape: (%s)", x.shape)
         raise ValueError("Matrix has invalid shape")
     # All columns should be numeric (either float or int)
     if not all(np.issubdtype(x, np.integer) or np.issubdtype(x, np.floating) for
                x in x.dtypes):
-        logging.fatal("Loaded matrix has non-numeric columns")
+        logger.fatal("Loaded matrix has non-numeric columns")
         raise ValueError("Loaded matrix has non-numeric columns")
     # Non-negativity constraint
     if (x < 0).any().any():
-        logging.fatal("Loaded matrix contains negative values")
+        logger.fatal("Loaded matrix contains negative values")
         raise ValueError("Loaded matrix contains negative values")
     # Don't accept NaN
     if x.isna().any().any():
-        logging.fatal("Loaded matrix contains NaN/NA values")
+        logger.fatal("Loaded matrix contains NaN/NA values")
         raise ValueError("Loaded matrix contains NaN/NA values")
 
 
@@ -4733,14 +4738,14 @@ def __alpha_values(alphas: Optional[List[float]]) -> List[float]:
     """Return default alpha value to search if alphas is None."""
     alpha_list: List[float] = [] if alphas is None else list(sorted(alphas))
     if alphas is None or len(alpha_list) == 0:
-        logging.info("Using default range of alphas values")
+        logger.info("Using default range of alphas values")
         return DEF_ALPHAS
     return alpha_list
 
 
 def _wisconsin_double_standardise(h: pd.DataFrame) -> pd.DataFrame:
     """Wisconsin double standardise matrix as per R function cmdscale"""
-    logging.info("Wisconsin double standardising data")
+    logger.info("Wisconsin double standardising data")
     # Species maximum standardisation - each species max is 1
     h = (h.T / h.max(axis=1)).T
     # Sample total standardisation

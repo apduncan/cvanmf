@@ -1,5 +1,6 @@
 """Tests for denovo ES generation."""
 import itertools
+import logging
 import pathlib
 import re
 from typing import List, Dict, Iterable, Tuple, Set, Optional
@@ -757,7 +758,7 @@ def test_cli_rank_selection(
                                    "--seed", "4928",
                                    "-l", "3",
                                    "-u", "5",
-                                   "--log_debug"
+                                   "--log_warning"
                                ]
                                )
     assert result.exit_code == 0, \
@@ -786,11 +787,11 @@ def test_cli_regu_selection(
                                    "--no-progress",
                                    "--seed", "4928",
                                    "--rank", "3",
-                                   "--log_info"
+                                   "--log_warning"
                                ]
                                )
     assert result.exit_code == 0, \
-        "CLI rank selection had non-zero exit code"
+        "CLI regu selection had non-zero exit code"
     td_path: pathlib.Path = pathlib.Path(td)
     for expected_file in ['regu_selection.tsv', 'regu_selection.pdf']:
         assert (td_path / expected_file).is_file(), \
@@ -867,7 +868,7 @@ def test_save_load_decompositions(small_decompositions_random,
     # Trim small decompositions so we're using a little less time
     # Keep two decompositions for two ranks
     smaller_decomps: Dict[int, List[Decomposition]] = {
-        i: small_decompositions_random[i][0:2] for i in
+        i: [x[:25, :, :] for x in small_decompositions_random[i][0:2]] for i in
         small_decompositions_random.keys()
     }
     Decomposition.save_decompositions(
