@@ -84,9 +84,10 @@ DEF_PCOA_POINT_AES: Dict[str, Any] = dict(
 )
 """Default geom_point fixed aesthetics for PCoA plots"""
 DEF_RELATIVE_WEIGHT_HEIGHTS: Dict[str, float] = dict(
-    bar=6.0,
-    ribbon=.5,
-    dot=.5
+    bar=1.0,
+    ribbon=.2,
+    dot=.5,
+    label=.5
 )
 """Default heights for relative weight plot"""
 DEF_ALPHAS: List[float] = [2 ** i for i in range(-5, 2)]
@@ -3007,6 +3008,146 @@ class Decomposition:
                        yintercept=threshold
                    ))
         return plt
+
+    def plot_relative_weight2(
+            self,
+            group: Optional[Union[pd.Series]] = None,
+            model_fit: bool = True,
+            heights: Union[Dict[str, float], Iterable[float]] = None,
+            width: float = 6.0,
+            sample_label_size: float = 5.0,
+            legend_cols_sig: int = 3,
+            legend_cols_grp: int = 3,
+            legend_side: str = "bottom",
+            **kwargs
+    ):
+        """Plot relative weight of each signature in each sample.
+
+        Please note this plot uses the marsilea package rather than
+        plotnine like other plots. Unfortunately, the options for
+        combining multiple elements are not yet well developed in
+        pltonine.
+
+        Plots a stacked bar chart with a bar for each sample displaying the
+        relative weight of each signature. Optionally the plot can also
+        include a section at the top summarising the model fit for each
+        sample, and a ribbon along the bottom display categorical metadata
+        for samples.
+
+        This uses patchworklib for putting together multiple plotnine plots,
+        so when adding either top or bottom element will return a Bricks item.
+        Patchworklib can be slow for large plots.
+
+        :param group: Categorical metadata for each sample to plot on ribbon
+            at the bottom
+        :param model_fit: Include a top row indicating model fit per sample
+        :param heights: Height in inches for each component of the plot. Only
+            used when including model fit or ribbon. Specify as a dictionary
+            with keys 'dot', 'bar', or 'ribbon', or a list with heights for
+            the elements included from top to bottom.
+        :param width: Width used when combining multiple elements
+        :param sample_label_size: Size for sample labels. Set to 0 to remove
+            sample labels.
+        :return: A plotnine ggplot or patchwork Bricks object
+        """
+        # Parse height arguments
+        if heights is not None:
+            if isinstance(heights, dict):
+                unex_keys: Set[str] = (
+                    set(heights.keys())
+                    .difference(DEF_RELATIVE_WEIGHT_HEIGHTS.keys())
+                )
+                if len(unex_keys) > 0:
+                    logging.warning(
+                        "Unexpected key(s) in heights: %s. Expecting: %s.",
+                        heights.keys(),
+                        DEF_RELATIVE_WEIGHT_HEIGHTS.keys()
+                    )
+            else:
+                parts: List[str] = [x for x in [
+                    'dot' if model_fit else None,
+                    'bar',
+                    'ribbon' if group is not None else None,
+                    'labels'
+                ] if x is not None]
+                vals: List[float] = list(heights)
+                if len(parts) != len(vals):
+                    logging.warning(
+                        "Passed %s heights when plot has %s parts (%s)",
+                        len(vals),
+                        len(parts),
+                        parts
+                    )
+                m: int = min(map(len, (parts, vals)))
+                vals, parts = vals[:m], parts[:m]
+                heights = dict(zip(parts, vals))
+        else:
+            heights = {}
+        heights = DEF_RELATIVE_WEIGHT_HEIGHTS | heights
+
+        # Get all required dataframes and match order
+        rel_df: pd.DataFrame = self.scaled('h')
+        mf: pd.Series = self.model_fit
+        if group is not None:
+            # If grouped, ensure no missing samples, and reorder weight to
+            # order of grouping
+            grp_missing: Set[str] = set(rel_df.columns) - set(group.index)
+            grp_extra: Set[str] = set(group.index) - set(rel_df.columns)
+            if len(grp_missing) > 0:
+                logging.warning("%s samples missing from group, replaced with"
+                                "NA.")
+            if len(grp_extra) > 0:
+                logging.warning("%s samples in group not in decompositions, "
+                                "removed from group.")
+            groupn = pd.concat(
+                [group, pd.Series({x: "NA" for x in grp_missing})])
+            groupn.name = group.name
+            group = groupn
+            group = group.drop(labels=list(grp_extra))
+            rel_df = rel_df.loc[:, group.index]
+
+        import marsilea as ma
+        import marsilea.plotter as mp
+        # Main stacked bar
+        bar: mp.StackBar = mp.StackBar(
+            rel_df,
+            legend_kws=dict(title="Signature", ncols=legend_cols_sig),
+            colors=dict(zip(self.names, self.colors)),
+        )
+        wb: ma.WhiteBoard = ma.WhiteBoard(
+            width=width, height=sum(heights.values()), margin=0.1
+        )
+        wb.add_layer(bar)
+
+        # Add grouping
+        if group is not None:
+            ribbon: mp.Colors = mp.Colors(
+                group,
+                label=group.name,
+                legend_kws=dict(ncols=legend_cols_grp)
+            )
+            wb.add_top(ribbon, size=heights['ribbon'], pad=0.1)
+
+        if model_fit:
+            points: mp.Point = mp.Point(
+                mf, label="Model Fit", linestyle='none', markersize=1.0,
+                label_loc="right"
+            )
+            wb.add_top(points, size=heights['dot'], pad=0.1, name="model_fit")
+            wb.render()
+            point_ax = wb.get_ax("model_fit")
+            point_ax.set_ylim(0, 1.0)
+
+        if sample_label_size > 0.0:
+            labels: mp.Labels = mp.Labels(
+                rel_df.columns,
+                fontsize=sample_label_size
+            )
+            wb.add_bottom(labels, size=heights['labels'])
+
+        wb.add_legends(side=legend_side)
+        return wb
+
 
     def plot_relative_weight(
             self,

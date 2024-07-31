@@ -523,6 +523,37 @@ def test_plot_relative_weight(
     assert pth.exists(), "Plot file not created"
     assert pth.stat().st_size > 0, "Plot file is empty"
 
+def test_plot_relative_weight2(
+        tmp_path: pathlib.Path,
+        small_decomposition
+):
+    matplotlib.pyplot.switch_backend("Agg")
+    # Want to plot a category with it
+    rnd_cat: pd.Series = pd.Series(
+        np.random.choice(["A", "B"], size=small_decomposition.h.shape[1]),
+        index=small_decomposition.h.columns
+    )
+    # Add a sample that is not in the decomposition
+    rnd_cat.loc['dn3259nfn'] = 'C'
+    # Remove one sample that should be there
+    rnd_cat = rnd_cat.drop(index=[rnd_cat.index[0]])
+    rnd_cat.name = "Category"
+    plt = small_decomposition.plot_relative_weight2(
+        group=rnd_cat,
+        model_fit=True,
+        heights=dict(ribbon=0.2, bar=0.8, labels=0.4),
+        sample_label_size=6.0,
+        legend_cols_h=2,
+        legend_cols_v=2,
+    )
+    pth = (tmp_path / "test_rank_sel.pdf")
+    plt.save(pth)
+    import os
+    os.system(f"open {pth}")
+    # Test that the file exists and isn't empty
+    assert pth.exists(), "Plot file not created"
+    assert pth.stat().st_size > 0, "Plot file is empty"
+
 
 def test_plot_feature_weight(
         tmp_path: pathlib.Path,

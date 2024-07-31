@@ -18,6 +18,7 @@ pyyaml = "^6.0.1"
 setuptools = "^69.1.1"
 scikit-bio = "^0.6.0"
 kneed = "^0.8.5"
+marsilea = "^0.4.3"
 
 [tool.poetry.dev-dependencies]
 
