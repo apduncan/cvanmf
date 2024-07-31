@@ -25,6 +25,9 @@ from sklearn.metrics.pairwise import cosine_similarity
 from cvanmf.models import Signatures
 
 # from cvanmf import models, denovo
+
+logger: logging.Logger = logging.getLogger(__name__)
+
 # Compile regular expressions
 RE_RANK: re.Pattern = re.compile("[a-zA-Z]__")
 RE_SPLIT_GENUS: re.Pattern = re.compile(r"([\w]+)_\w$")
@@ -300,7 +303,7 @@ def validate_genus_table(abd_tbl: pd.DataFrame,
 
     # Check the dimensions make sense
     if abd_tbl.shape[0] < 2 or abd_tbl.shape[1] < 2:
-        logging.critical(
+        logger.critical(
             """Table has one or fewer columns or rows. Check delimiters and
             newline formats are correct.""")
         raise CVANMFException("Table incorrect format.")
@@ -310,7 +313,7 @@ def validate_genus_table(abd_tbl: pd.DataFrame,
     # Unfortunate for people who only gave their samples numbers, but alas.
     all_numeric: bool = all(map(lambda x: str(x).isnumeric(), abd_tbl.columns))
     if all_numeric:
-        logging.error(
+        logger.error(
             """Table appear to lack sample IDs in the first row. Add
             sample IDs, or ensure all sample IDs are not numeric.""")
         raise CVANMFException("Table lacks sample IDs in first row.")
@@ -320,7 +323,7 @@ def validate_genus_table(abd_tbl: pd.DataFrame,
     count_bac: int = len(
         list(filter(lambda x: "BACTERIA;" in x.upper(), abd_tbl.columns)))
     if (count_bac / len(abd_tbl.columns)) > 0.2:
-        logging.warning("""Table appears to have taxa on columns, so we have
+        logger.warning("""Table appears to have taxa on columns, so we have
                  transposed it.""")
         abd_tbl = abd_tbl.T
 
@@ -332,7 +335,7 @@ def validate_genus_table(abd_tbl: pd.DataFrame,
     rank_indicated: bool = all(map(_contain_rank_indicators,
                                    abd_tbl.index[:10]))
     if rank_indicated:
-        logging.info(
+        logger.info(
             """Taxa names appear to contain rank indicators (i.e k__, p__),
             these have been removed to match Enterosignature format.""")
         abd_tbl.index = map(
@@ -346,7 +349,7 @@ def validate_genus_table(abd_tbl: pd.DataFrame,
     numeric_taxa: List[str] = list(filter(
         lambda x: str(x).lstrip('-').isnumeric(), abd_tbl.index))
     if len(numeric_taxa) > 0:
-        logging.info(
+        logger.info(
             f"{len(numeric_taxa)} taxa had numeric labels and were dropped.")
         abd_tbl = abd_tbl.drop(labels=numeric_taxa)
 
@@ -358,12 +361,12 @@ def validate_genus_table(abd_tbl: pd.DataFrame,
     if any(duplicates):
         orig_dups: List[str] = abd_tbl.index[duplicates]
         new_dups: List[str] = new_index[duplicates]
-        logging.error(
+        logger.error(
             f"{len(orig_dups)} taxa are duplicates after trimming to "
             "genus length. This may be genuine duplicates, or could be "
             "due to erroneous semi-colons. Duplicates are:")
         for o, n in zip(orig_dups, new_dups):
-            logging.error(f'{o} -> {n}')
+            logger.error(f'{o} -> {n}')
         raise CVANMFException("Duplicate taxa in input after lineage " +
                               "truncated.")
 
@@ -371,7 +374,7 @@ def validate_genus_table(abd_tbl: pd.DataFrame,
     bad_taxa: List = list(filter(_is_taxon_unknown, abd_tbl.index))
     abd_tbl = abd_tbl.drop(labels=bad_taxa)
     if len(bad_taxa) > 0:
-        logging.info(f"Removed {len(bad_taxa)} unknown taxa: {bad_taxa}")
+        logger.info(f"Removed {len(bad_taxa)} unknown taxa: {bad_taxa}")
 
     # Remove any taxa which had 0 observations, and samples for which 0
     # taxa were observed (unlikely but check)
@@ -380,11 +383,11 @@ def validate_genus_table(abd_tbl: pd.DataFrame,
         abd_tbl.loc[:, abd_tbl.sum(axis=0) == 0].columns)
     if len(zero_taxa) > 0:
         abd_tbl = abd_tbl.drop(labels=zero_taxa)
-        logging.info(
+        logger.info(
             f"Dropped {len(zero_taxa)} taxa with no observations: {zero_taxa}")
     if len(zero_samples) > 0:
         abd_tbl = abd_tbl.drop(columns=zero_samples)
-        logging.info(
+        logger.info(
             f"Dropped {len(zero_samples)} sample with no observations")
 
     # Renormalise (TSS)
@@ -445,7 +448,7 @@ def match_genera(
     # Add any exact matches. If there was an exact match, remove from unmatched
     # pool
     exact = es_taxa.intersection(input_taxa)
-    logging.info(
+    logger.info(
         f"{len(exact)} of {len(input_taxa)} taxa names matched exactly")
     for genus in exact:
         mapping.add(genus, genus)
@@ -458,7 +461,7 @@ def match_genera(
         if root in es_taxa:
             trimmed.add(taxon)
             mapping.add(taxon, root)
-    logging.info(
+    logger.info(
         f"{len(trimmed)} genera trimmed and matched (i.e Ruminococcus_C ->"
         " Ruminococcus)")
     unmatched = unmatched.difference(trimmed)
@@ -503,7 +506,7 @@ def match_genera(
             for t in t_to:
                 mapping.add(f, t)
             clemence_merged.add(f)
-    logging.info(f"{len(clemence_merged)} taxa merged by final rank (e.g. "
+    logger.info(f"{len(clemence_merged)} taxa merged by final rank (e.g. "
                  "UBA1435, CAG-314)")
     unmatched = unmatched.difference(clemence_merged)
 
@@ -517,7 +520,7 @@ def match_genera(
         for match in final_match:
             mapping.add(taxon, match)
             final_matched.add(taxon)
-    logging.info(
+    logger.info(
         f"{len(final_matched)} taxa matched by name of lowest rank alone")
     unmatched = unmatched.difference(final_matched)
 
@@ -530,7 +533,7 @@ def match_genera(
             if family in es_taxa:
                 family_match.add(taxon)
                 mapping.add(taxon, family)
-        logging.info(
+        logger.info(
             f"{len(family_match)} genera rolled up to family "
             "(i.e Lachonspiraceae;CAG-95 -> Lachnospiraceae)")
         unmatched = unmatched.difference(family_match)
@@ -670,17 +673,17 @@ def _reapply_model(
     input_unique = new_w[new_w.sum(axis=1) == 0].index
     input_abd_missed: float = new_abd.loc[input_unique].sum().sum()
     input_abd_missed_prop: float = input_abd_missed / new_abd.sum().sum()
-    logging.info(
+    logger.info(
         f"{len(input_unique)} features unique to input, could not be "
         f"matched any entries in signature W matrix.")
-    logging.info(
+    logger.info(
         f"These unique features represent {input_abd_missed:.2f} weight of"
         f" a total {new_abd.sum().sum():.2f} ({input_abd_missed_prop:.2%}).")
 
     # Loss of W weight
     w_total: float = w.sum().sum()
     new_w_total: float = new_w.sum().sum()
-    logging.info(
+    logger.info(
         f"Sum of weights in new W matrix is {new_w_total:.2f}; "
         f"Original signature matrix sum is {w_total:.2f}. "
         f"{1 - (new_w_total / w_total):.2%} of signature W matrix weight lost "
@@ -750,7 +753,7 @@ def reapply(y: Union[str, pd.DataFrame],
         # Check for known models
         from cvanmf import models
         if model.lower() == "5es":
-            logging.info("Loading 5ES model")
+            logger.info("Loading 5ES model")
             model_obj = models.five_es()
         else:
             raise CVANMFException(f"Model '{model}' not recognised.")
