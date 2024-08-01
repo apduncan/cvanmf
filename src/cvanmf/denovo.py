@@ -3646,12 +3646,12 @@ class Decomposition:
             self,
             md: pd.DataFrame,
             selector: Callable[[pd.Series], bool],
-            scale_h: bool = True
+            measure_df: pd.DataFrame
     ) -> pd.DataFrame:
         """Extract metadata of certain types, join to signatures, stack."""
         selected: pd.Series = md.apply(selector)
         md_subset: pd.DataFrame = md.loc[:, selected[selected].index]
-        h: pd.DataFrame = self.h.T if not scale_h else self.scaled("h").T
+        h: pd.DataFrame = measure_df
         md_subset = (
             md_subset
             .stack()
@@ -3668,13 +3668,15 @@ class Decomposition:
         md_subset['signature'] = pd.Categorical(
             md_subset['signature'],
             ordered=True,
-            categories=self.names
+            categories=h.columns
         )
         return md_subset
 
     def plot_metadata(
             self,
             metadata: pd.DataFrame,
+            against: Optional[Union[pd.DataFrame, Literal['signature',
+            'model_fit', 'both']]] = None,
             continuous_fn: Optional[Callable[[pd.Series], bool]] = None,
             discrete_fn: Optional[Callable[[pd.Series], bool]] = None,
             boxplot_params: Optional[Dict] = None,
@@ -3700,6 +3702,9 @@ class Decomposition:
             metadata.
         :param metadata: Dataframe with samples on rows, and metadata on
             columns.
+        :param against: DataFrame to plot the metadata against. Should
+            contain an entry for each sample, with samples on rows. Defaults to
+            scaled H matrix (transpose of typical H format).
         :param continuous_fn: Function to determine if a column is
             continuous. Defaults to considering any floating type or integer to
             be continuous. May want to customise if you want to use things such
@@ -3725,6 +3730,20 @@ class Decomposition:
             90.0 if disc_rotate_labels is None else disc_rotate_labels)
         point_params = {} if point_params is None else point_params
         boxplot_params = {} if boxplot_params is None else boxplot_params
+        against = against if against is not None else 'both'
+        if isinstance(against, str):
+            if against == 'signature' or against == 'signatures':
+                against = self.scaled('h').T
+            elif against == 'model_fit' or against == "modelfit":
+                against = self.model_fit.to_frame('modelfit')
+            elif against == 'both':
+                against = pd.concat(
+                    [self.scaled('h').T, self.model_fit.to_frame('modelfit')],
+                    axis=1
+                )
+            else:
+                raise ValueError("against must be one of model_fit or "
+                                 "signatures, or a DataFrame.")
         # Convert
         md: pd.DataFrame = (
             metadata.to_frame() if isinstance(metadata, pd.Series) else
@@ -3732,11 +3751,13 @@ class Decomposition:
         )
         cont: pd.DataFrame = self.__extract_convert_metadata(
             md,
-            selector=continuous_fn
+            selector=continuous_fn,
+            measure_df=against
         )
         disc: pd.DataFrame = self.__extract_convert_metadata(
             md,
-            selector=discrete_fn
+            selector=discrete_fn,
+            measure_df=against
         )
         # Calculate number of bars in each metadata col
         cat_count = disc.groupby('metadata_field').nunique()['metadata_value']
