@@ -18,7 +18,7 @@ from cvanmf.denovo import BicvSplit, BicvFold, bicv, _cosine_similarity, \
     decompositions, Decomposition, cli_rank_selection, regu_selection, \
     plot_regu_selection, cli_regu_selection, suggest_rank, _cbar, \
     _cophenetic_correlation, cophenetic_correlation, _dispersion, dispersion, \
-    plot_stability_rank_selection
+    plot_stability_rank_selection, suggest_rank_stability
 from cvanmf.reapply import match_identical
 
 
@@ -104,6 +104,25 @@ def small_decompositions_random(
         random_starts=5,
         ranks=[3, 4, 5],
         top_n=3,
+        top_criteria="cosine_similarity",
+        progress_bar=False
+    )
+    return res
+
+
+@pytest.fixture
+def mid_decompositions_random(
+        small_overlap_blocks,
+        scope="session"
+) -> Dict[int, List[Decomposition]]:
+    """Get 'best' decompositions for a small dataset from random
+    initialisations. Runs for ranks 3 to 8, to allow for more better rank
+    selection testing."""
+    res = decompositions(
+        x=small_overlap_blocks,
+        random_starts=5,
+        ranks=[3, 4, 5, 6, 7, 8],
+        top_n=5,
         top_criteria="cosine_similarity",
         progress_bar=False
     )
@@ -1046,6 +1065,32 @@ def test__dispersion(small_decompositions_random):
 def test_dispersion(small_decompositions_random):
     res = dispersion(small_decompositions_random)
     ff = 66
+
+
+def test_stability_rank_selection(small_decompositions_random):
+    res: pd.DataFrame = pd.concat(
+        [
+            dispersion(small_decompositions_random),
+            cophenetic_correlation(small_decompositions_random)
+        ],
+        axis=1
+    ).reset_index(names="rank")
+    stab_suggest: Dict[str, int] = suggest_rank_stability(res)
+    stab_suggest_2: Dict[str, int] = suggest_rank_stability(
+        small_decompositions_random
+    )
+    assert stab_suggest == stab_suggest_2, ("Original object and DataFrame "
+                                            "give different results")
+
+    # Make a dataframe with two viable peaks
+    df: pd.DataFrame = pd.DataFrame(
+        [0.6, 1.0, 0.9, 0.92, 0.93, 0.98, .7, .6, .5, .4],
+        index=range(2, 12),
+        columns=['cophenetic_correlation']
+    ).reset_index(names=['rank'])
+    res2: pd.DataFrame = suggest_rank_stability(
+        df, measures=['cophenetic_correlation'])
+    assert res2['cophenetic_correlation'] == 7, "Incorrect rank selected"
 
 
 def test_plot_stability_rank_selection(

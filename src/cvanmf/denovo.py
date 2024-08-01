@@ -853,6 +853,53 @@ def suggest_rank(
     )
 
 
+def suggest_rank_stability(
+        rank_selection_results: Union[pd.DataFrame, Iterable[pd.Series],
+                                Dict[int, List[Decomposition]]],
+        measures: List[str] = ['cophenetic_correlation', 'dispersion'],
+        near_max: float = 0.02,
+        **kwargs
+) -> Dict[str, int]:
+    """Suggest a suitable rank.
+
+    Attempt to identify peaks in stability based rank selection criteria (
+    cophenetic correlation, dispersion). By default the highest peak is
+    selected. Where there are many similar ranks (defined by near_max),
+    the one with the most consecutively decreasing values after it.
+
+    Please note this is only a suggestion of a suitable rank; the plots
+    should still be inspected and decompositions of candidate ranks inspected to
+    make a final decision.
+
+    :param rank_selection_results: Results from :func:`decomposition`,
+    or series produced by :func:`dispersion` and
+    :func:`cophenetic_correlation`, or a DataFrame of those series joined.
+    :param measures: The measures to consider if passed a DataFrame
+    :param near_max: Consider peaks (p) candidates if they are within a
+    certain distance of global maximum (gm): p >= gm * (1 - near_max).
+    :param kwargs: Passed to argrelmax.
+    """
+
+    df: pd.DataFrame
+    if isinstance(rank_selection_results, pd.DataFrame):
+        df = rank_selection_results
+    elif isinstance(rank_selection_results, dict):
+        df = pd.concat([dispersion(rank_selection_results),
+                        cophenetic_correlation(rank_selection_results)],
+                       axis=1
+                       ).reset_index(names=['rank'])
+    else:
+        df = pd.concat(list(rank_selection_results), axis=1).reset_index(
+            names=['rank'])
+
+    return (
+        df[['rank'] + measures]
+        .set_index('rank')
+        .apply(__detect_max, **kwargs)
+        .to_dict()
+    )
+
+
 def __detect_elbow(
         series: pd.Series,
         concave: bool = True,
@@ -871,6 +918,49 @@ def __detect_elbow(
         **kwargs
     )
     return locator.knee
+
+
+def __detect_max(
+        series: pd.Series,
+        near_max: float = 0.02,
+        **kwargs
+) -> float:
+    """Select rank based on maxima
+
+    :param series: Values for each rank, sorted in rank order
+    :param near_max: Any maxima within 0.02 of maximum are considered
+    candidates, and scored based on length of monotonically decreasing tail.
+    :param kwargs: Passed to argrelmax.
+    :returns: Series with index being rank, sorted by value.
+    """
+    from scipy.signal import argrelmax
+    # Default to wrap to get peaks at 2
+    maxima_idx: np.ndarray = argrelmax(
+        data=series.values,
+        **(dict(mode="wrap") | kwargs))[0]
+    maxima_vals: np.ndarray = series.values[maxima_idx]
+    near_max: np.ndarray = maxima_vals >= ((1 - near_max) * maxima_vals.max())
+    candidates: np.ndarray = maxima_idx[near_max]
+    if len(candidates) == 1:
+        return series.index[candidates[0]]
+    if len(candidates) < 1:
+        logging.error("No candidates found during stability rank suggestion.")
+    logger.info("Multiple candidates (%s) found, selecting on length of "
+                "monotonically decreasing values after.", maxima_idx.tolist())
+    decreasing: np.ndarray = np.diff(series.values) < 0
+    selected_idx, max_tail_length = 0, -1
+    for candidate_idx in candidates:
+        subs: np.ndarray = decreasing[candidate_idx:]
+        tail_length: int
+        if sum(~subs) == 0:
+            tail_length = len(subs)
+        else:
+            tail_length = np.where(~subs)[0][0]
+        logger.debug("Candidate %s, tail length %s", candidate_idx,
+                     tail_length)
+        if tail_length > max_tail_length:
+            selected_idx, max_tail_length = candidate_idx, tail_length
+    return series.index[selected_idx]
 
 
 def plot_rank_selection(results: Dict[Union[int, float], List[BicvResult]],
@@ -1532,6 +1622,8 @@ def plot_stability_rank_selection(
 ) -> plotnine.ggplot:
     """Plot results for stability based rank selection methods.
 
+    Automated rank selection uses :func:`suggest_rank_stability`.
+
     :param decompositions: Results from :func:`decompositions`. Not used if
         series is passed.
     :param series: Series to plot, resulting from
@@ -1575,7 +1667,7 @@ def plot_stability_rank_selection(
 
     # Add auto rank suggestion
     if suggested_rank == True:
-        suggested: Dict[str, int] = suggest_rank(
+        suggested: Dict[str, int] = suggest_rank_stability(
             pd.concat(series, axis=1).reset_index(names='rank'),
             measures=include
         )
