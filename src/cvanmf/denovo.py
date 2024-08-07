@@ -33,6 +33,7 @@ import pathlib
 import re
 import shutil
 import tarfile
+import time
 from functools import reduce
 from typing import (Optional, NamedTuple, List, Iterable, Union, Tuple, Set,
                     Any, Dict, Callable, Literal, Hashable, Generator)
@@ -1374,9 +1375,12 @@ def bicv(params: Optional[NMFParameters] = None, **kwargs) -> BicvResult:
                                      )
 
     # Combine results from each fold
+    start: float = time.time()
     logger.info("Starting bi-cross validation; rank %s; alpha %s",
                 params.rank, params.alpha)
     joined: BicvResult = BicvResult.join_folds(list(runs))
+    logger.info("Completed bi-cross validation; took %s seconds",
+                time.time() - start)
     return joined
 
 
@@ -3161,7 +3165,7 @@ class Decomposition:
                     .difference(DEF_RELATIVE_WEIGHT_HEIGHTS.keys())
                 )
                 if len(unex_keys) > 0:
-                    logging.warning(
+                    logger.warning(
                         "Unexpected key(s) in heights: %s. Expecting: %s.",
                         heights.keys(),
                         DEF_RELATIVE_WEIGHT_HEIGHTS.keys()
@@ -3171,11 +3175,12 @@ class Decomposition:
                     'dot' if model_fit else None,
                     'bar',
                     'ribbon' if group is not None else None,
-                    'labels'
+                    'label'
                 ] if x is not None]
                 vals: List[float] = list(heights)
                 if len(parts) != len(vals):
-                    logging.warning(
+                    logger.debug("Using heights %s", heights)
+                    logger.warning(
                         "Passed %s heights when plot has %s parts (%s)",
                         len(vals),
                         len(parts),
@@ -3184,9 +3189,11 @@ class Decomposition:
                 m: int = min(map(len, (parts, vals)))
                 vals, parts = vals[:m], parts[:m]
                 heights = dict(zip(parts, vals))
+                logger.debug("Using heights %s", heights)
         else:
             heights = {}
         heights = DEF_RELATIVE_WEIGHT_HEIGHTS | heights
+        logger.debug("Heights %s", heights)
 
         # Get all required dataframes and match order
         rel_df: pd.DataFrame = self.scaled('h')
@@ -3197,10 +3204,10 @@ class Decomposition:
             grp_missing: Set[str] = set(rel_df.columns) - set(group.index)
             grp_extra: Set[str] = set(group.index) - set(rel_df.columns)
             if len(grp_missing) > 0:
-                logging.warning("%s samples missing from group, replaced with"
+                logger.warning("%s samples missing from group, replaced with"
                                 "NA.")
             if len(grp_extra) > 0:
-                logging.warning("%s samples in group not in decompositions, "
+                logger.warning("%s samples in group not in decompositions, "
                                 "removed from group.")
             groupn = pd.concat(
                 [group, pd.Series({x: "NA" for x in grp_missing})])
@@ -3224,6 +3231,8 @@ class Decomposition:
 
         # Add grouping
         if group is not None:
+            logger.debug("Add Colors (group), height %s",
+                          heights['ribbon'])
             ribbon: mp.Colors = mp.Colors(
                 group,
                 label=group.name,
@@ -3232,16 +3241,19 @@ class Decomposition:
             wb.add_top(ribbon, size=heights['ribbon'], pad=0.1)
 
         if model_fit:
+            logger.debug("Add Point (model_fit), height %s",
+                          heights['dot'])
             points: mp.Point = mp.Point(
                 mf, label="Model Fit", linestyle='none', markersize=1.0,
                 label_loc="right"
             )
             wb.add_top(points, size=heights['dot'], pad=0.1, name="model_fit")
-            wb.render()
-            point_ax = wb.get_ax("model_fit")
-            point_ax.set_ylim(0, 1.0)
+            # wb.render()
+            # point_ax = wb.get_ax("model_fit")
+            # point_ax.set_ylim(0, 1.0)
 
         if sample_label_size > 0.0:
+            logger.debug("Add Labels (labels), height %s", heights['label'])
             labels: mp.Labels = mp.Labels(
                 rel_df.columns,
                 fontsize=sample_label_size

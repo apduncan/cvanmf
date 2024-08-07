@@ -146,6 +146,54 @@ def swimmer() -> ExampleData:
     )
 
 
+def lung_cancer_cells() -> ExampleData:
+    """Relative cell-compositions from non-small cell lung cancer studies
+
+    Gives the number of cells of different types in lung tissue samples from a
+    non-small cell lung cancer atlas, which was compiled from 29 studies and
+    includes 556 samples, from 318 individuals (86 of which are healthy
+    controls). The data was uploaded to cellxgene using their standard
+    ontologies, which is the source we have taken the data from. Metadata
+    provided here is a mixture of metadata from cellxgene, and some from the
+    original paper. We have selected out only the tissues samples labelled as
+    "lung". In total, this gives 224 samples, and 33 cell types. The data
+    here is total-sum-scaled, i.e. each sample sums to 1.
+    """
+
+    return ExampleData(
+        data=pd.read_csv(
+            str(files("cvanmf.data").joinpath(
+                Path("NSCLC", "nsclc.lung.composition.tsv.gz")
+            )),
+            sep="\t",
+            index_col=0
+        ),
+        rank=[],
+        row_metadata=None,
+        col_metadata=pd.read_csv(
+            str(files("cvanmf.data").joinpath(
+                Path("NSCLC", "nsclc.lung.metadata.tsv.gz")
+            )),
+            sep="\t",
+            index_col=0
+        ),
+        other_metadata=None,
+        description=_shorten_docstring(lung_cancer_cells.__doc__),
+        name="Non-small cell lung cancer",
+        doi="https://doi.org/10.1016/j.ccell.2022.10.008",
+        citation=("Salcher, S. et al. High-resolution single-cell atlas "
+                  "reveals diversity and plasticity of tissue-resident "
+                  "neutrophils in non-small cell lung cancer. Cancer Cell 40, "
+                  "1503-1520.e8 (2022). \n"
+                  "Program, C. S.-C. B. et al. CZ CELL×GENE Discover: A "
+                  "single-cell data platform for scalable exploration, "
+                  "analysis and modeling of aggregated data. "
+                  "2023.10.30.563174 Preprint at "
+                  "https://doi.org/10.1101/2023.10.30.563174 (2023)."),
+        short_name="NSCLC"
+    )
+
+
 def synthetic_blocks(m: int = 100,
                      n: int = 100,
                      overlap: float = 0.25,
