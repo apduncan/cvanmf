@@ -36,6 +36,8 @@ autoapi_template_dir = 'autoapi_templates'
 # Permit long running cells in example notebooks
 nbsphinx_timeout = 360
 
+nb_execution_excludepatterns = ["cell_example*"]
+
 def skip_utils(app, what, name, obj, skip, options):
     if "RE_" in name or "CVANMFException" in name or 'DEF_' in name:
        skip = True

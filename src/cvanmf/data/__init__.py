@@ -1,2 +1,3 @@
-from cvanmf.data.utils import (leukemia, swimmer, example_abundance,
+from cvanmf.data.utils import (leukemia, swimmer,
+                               lung_cancer_cells, example_abundance,
                                synthetic_blocks, synthetic_dense)
