@@ -1,4 +1,5 @@
 docs/_build
+docs/cell_imgs
 dist
 .pytest_cache
 htmlcov
@@ -6,3 +7,4 @@ htmlcov
 .coverage*
 test/
 *.pyc
+*/.ipynb_checkpoints

@@ -3575,6 +3575,7 @@ class Decomposition:
     def __univariate_single_category(
             self,
             metadata: pd.Series,
+            against: pd.DataFrame,
             drop_na: bool,
             adj_method: str,
             alpha: float
@@ -3582,6 +3583,7 @@ class Decomposition:
         """Univariate tests for all signatures against a single set of metadata.
 
         :param metadata: Metadata, discrete
+        :param against: Data to test against
         :param drop_na: Remove any NA values from metadata and signature
             before performing tests
         :param adj_method: Multiple test adjustment method, any supported by
@@ -3594,8 +3596,8 @@ class Decomposition:
         md_clean: pd.Series = metadata.dropna() if drop_na else metadata
         categories: int = len(md_clean.unique())
         test: str = "kw" if categories > 2 else "mw"
-        res = self.scaled("h").apply(self.__univariate_single_signature,
-                                     metadata=md_clean, test=test, axis=1)
+        res = against.apply(self.__univariate_single_signature,
+                                     metadata=md_clean, test=test, axis=0).T
         from statsmodels.stats.multitest import multipletests
         reject, adj_p, _, _ = multipletests(
             res['p'],
@@ -3611,6 +3613,9 @@ class Decomposition:
     def univariate_tests(
             self,
             metadata: pd.DataFrame,
+            against: Optional[Union[
+                pd.DataFrame, Literal['signature', 'model_fit', 'both']
+            ]] = None,
             drop_na: bool = True,
             adj_method: str = "fdr_bh",
             alpha: float = 0.05
@@ -3623,22 +3628,30 @@ class Decomposition:
         category tests.
 
         :param metadata: Dataframe of metadata variables to test against. Can
-            only handle discrete values.
+        only handle discrete values.
+        :param against: What to test the metadata against. This can be
+        'signatures' for relative H weights, 'model_fit' for per sample
+        cosine similarity, or 'both' (default). You can also provide any
+        arbitrary matrix with the correct dimensions, for instance if you had
+        done some custom processing of the H matrix, or wanted to use
+        absolute H weights.
         :param drop_na: Remove any samples with NA values for metadata before
-            testing. This is done on a per test basis, so one NA will not cause
-            a sample to be removed for all tests.
+        testing. This is done on a per test basis, so one NA will not cause
+        a sample to be removed for all tests.
         :param adj_method: Method to adjust for multiple tests. This is applied
-            both locally (for each metadata category), and globally (
-            considering all tests). Accepts any method supported by
-            statsmodels multipletests.
+        both locally (for each metadata category), and globally (
+        considering all tests). Accepts any method supported by
+        statsmodels multipletests.
         :param alpha: Threshold value to reject H0
         :return: Dataframe with results for each signature and each metadata
             variable.
         """
 
+        against = self.__get_against(against)
         res = pd.concat(
             [self.__univariate_single_category(
-                metadata[x], drop_na=drop_na, adj_method=adj_method,
+                metadata[x], against=against,
+                drop_na=drop_na, adj_method=adj_method,
                 alpha=alpha
             ) for x in metadata.columns]
         )
@@ -3658,12 +3671,12 @@ class Decomposition:
             self,
             md: pd.DataFrame,
             selector: Callable[[pd.Series], bool],
-            scale_h: bool = True
+            measure_df: pd.DataFrame
     ) -> pd.DataFrame:
         """Extract metadata of certain types, join to signatures, stack."""
         selected: pd.Series = md.apply(selector)
         md_subset: pd.DataFrame = md.loc[:, selected[selected].index]
-        h: pd.DataFrame = self.h.T if not scale_h else self.scaled("h").T
+        h: pd.DataFrame = measure_df
         md_subset = (
             md_subset
             .stack()
@@ -3680,13 +3693,46 @@ class Decomposition:
         md_subset['signature'] = pd.Categorical(
             md_subset['signature'],
             ordered=True,
-            categories=self.names
+            categories=h.columns
         )
         return md_subset
+
+    def __get_against(
+            self,
+            against: Optional[Union[
+                pd.DataFrame, Literal['signature', 'model_fit', 'both']
+            ]]
+    ) -> pd.DataFrame:
+        """Data to plot metadata against.
+
+        Defaults to both if not specified. 'signature' means relative
+        signature weight, 'model_fit' the per sample model fit, and 'both'
+        joins those two matrices.
+
+        :param against: Either data to plot against, or a string indicating
+        the desired data
+        """
+        against = against if against is not None else 'both'
+        if isinstance(against, str):
+            if against == 'signature' or against == 'signatures':
+                against = self.scaled('h').T
+            elif against == 'model_fit' or against == "modelfit":
+                against = self.model_fit.to_frame('modelfit')
+            elif against == 'both':
+                against = pd.concat(
+                    [self.scaled('h').T, self.model_fit.to_frame('modelfit')],
+                    axis=1
+                )
+            else:
+                raise ValueError("against must be one of model_fit or "
+                                 "signatures, or a DataFrame.")
+        return against
 
     def plot_metadata(
             self,
             metadata: pd.DataFrame,
+            against: Optional[Union[pd.DataFrame, Literal['signature',
+            'model_fit', 'both']]] = None,
             continuous_fn: Optional[Callable[[pd.Series], bool]] = None,
             discrete_fn: Optional[Callable[[pd.Series], bool]] = None,
             boxplot_params: Optional[Dict] = None,
@@ -3712,6 +3758,9 @@ class Decomposition:
             metadata.
         :param metadata: Dataframe with samples on rows, and metadata on
             columns.
+        :param against: DataFrame to plot the metadata against. Should
+            contain an entry for each sample, with samples on rows. Defaults to
+            scaled H matrix (transpose of typical H format).
         :param continuous_fn: Function to determine if a column is
             continuous. Defaults to considering any floating type or integer to
             be continuous. May want to customise if you want to use things such
@@ -3737,6 +3786,8 @@ class Decomposition:
             90.0 if disc_rotate_labels is None else disc_rotate_labels)
         point_params = {} if point_params is None else point_params
         boxplot_params = {} if boxplot_params is None else boxplot_params
+        against = self.__get_against(against)
+
         # Convert
         md: pd.DataFrame = (
             metadata.to_frame() if isinstance(metadata, pd.Series) else
@@ -3744,16 +3795,13 @@ class Decomposition:
         )
         cont: pd.DataFrame = self.__extract_convert_metadata(
             md,
-            selector=continuous_fn
+            selector=continuous_fn,
+            measure_df=against
         )
         disc: pd.DataFrame = self.__extract_convert_metadata(
             md,
-            selector=discrete_fn
-        )
-        # Calculate number of bars in each metadata col
-        cat_count = disc.groupby('metadata_field').nunique()['metadata_value']
-        disc_spacing: Dict[str, List[int]] = dict(
-            x=cat_count.to_list()
+            selector=discrete_fn,
+            measure_df=against
         )
 
         disc_plot: plotnine.ggplot = (
@@ -3767,7 +3815,7 @@ class Decomposition:
                 ) +
                 plotnine.geom_boxplot(**boxplot_params) +
                 plotnine.facet_grid(rows="signature", cols="metadata_field",
-                                    scales="free_x", space="free_x") +
+                                    scales="free", space="free_x") +
                 plotnine.ylab("Signature Weight") +
                 plotnine.xlab("Metadata Value") +
                 plotnine.guides(fill=plotnine.guide_legend(title="Signature")) +
@@ -3788,7 +3836,7 @@ class Decomposition:
                 ) +
                 plotnine.geom_point(**point_params) +
                 plotnine.facet_grid(["signature", "metadata_field"],
-                                    scales="free_x") +
+                                    scales="free_y") +
                 plotnine.ylab("Signature Weight") +
                 plotnine.xlab("Metadata Value") +
                 plotnine.guides(
@@ -3798,6 +3846,7 @@ class Decomposition:
         if show_significance:
             disc_plot = self.__attach_significance(
                 disc_plot,
+                against=against,
                 significance_formatter=significance_formatter,
                 univar_params=univariate_test_params
             )
@@ -3807,6 +3856,7 @@ class Decomposition:
     def __attach_significance(
             self,
             plt_metadata: plotnine.ggplot,
+            against: pd.DataFrame,
             significance_formatter: Callable[[float, float, float], str],
             univar_params: Dict[str, Any]
     ) -> plotnine.ggplot:
@@ -3825,26 +3875,40 @@ class Decomposition:
 
         univar_res: pd.DataFrame = self.univariate_tests(
             metadata=df,
+            against=against,
             **({} if univar_params is None else univar_params)
         )
 
         # Need to calculate where to place the label on the x and y axes, as
         # sadly we can't just say middle and top a bit
         xpos: pd.DataFrame = (df.nunique() / 2) + 0.5
-        ypos: pd.DataFrame = (
+        y_max: pd.DataFrame = (
             plt_metadata.data[['signature', 'signature_weight']]
             .groupby("signature")
             .max()
         )
-        ypos_const: float = ypos.max().iloc[0] * 1.1
+        y_min: pd.DataFrame = (
+            plt_metadata.data[['signature', 'signature_weight']]
+            .groupby("signature")
+            .min()
+        )
+        y_range: pd.DataFrame = y_max - y_min
+        y_pos: pd.DataFrame = y_max + (y_range * 0.1)
+        y_pos.columns = ['y']
+        ypos_const: float = y_max.max().iloc[0] * 1.1
         label_df: pd.DataFrame = (
             univar_res.merge(
                 right=xpos.to_frame("x"),
                 right_index=True,
                 left_on="md",
                 how="left"
+            ).merge(
+                right=y_pos,
+                right_index=True,
+                left_index=True,
+                how="left"
             )
-        ).assign(y=ypos_const)
+        )
         label_df['label_str'] = [
             significance_formatter(*tuple(x)) for _, x in
             label_df[['p', 'local_adj_p', 'global_adj_p']].iterrows()
@@ -3863,7 +3927,7 @@ class Decomposition:
                     label="label_str"
                 )
             ) +
-            plotnine.scale_y_continuous(expand=(0, 0, 0.1, 0))
+            plotnine.scale_y_continuous(expand=(0.05, 0, 0.1, 0))
         )
         return plt_metadata
 

@@ -994,6 +994,26 @@ def test_plot_metadata(
     assert cont_pth.exists(), "Plot file not created"
     assert cont_pth.stat().st_size > 0, "Plot file is empty"
 
+def test_plot_metadata_modelfit(
+        small_decomposition,
+        small_decomposition_metadata_cd,
+        tmp_path: pathlib.Path
+):
+    disc_plt, cont_plt = small_decomposition.plot_metadata(
+        metadata=small_decomposition_metadata_cd,
+        against="model_fit"
+    )
+    disc_pth = (tmp_path / "test_disc.png")
+    disc_plt.save(disc_pth)
+    # Test that the file exists and isn't empty
+    assert disc_pth.exists(), "Plot file not created"
+    assert disc_pth.stat().st_size > 0, "Plot file is empty"
+    cont_pth = (tmp_path / "test_cont.png")
+    cont_plt.save(cont_pth)
+    # Test that the file exists and isn't empty
+    assert cont_pth.exists(), "Plot file not created"
+    assert cont_pth.stat().st_size > 0, "Plot file is empty"
+
 
 def test_name_signatures_by_weight(
         small_decomposition
