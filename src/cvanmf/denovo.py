@@ -98,13 +98,14 @@ DEF_ALPHAS: List[float] = [2 ** i for i in range(-5, 2)]
 class BicvFold(NamedTuple):
     """One fold from a shuffled matrix
 
-    The 9 submatrices have been joined into the structure shown below
+    The submatrices have been joined into the structure shown below
 
     .. code-block:: text
 
-        A B B
-        C D D
-        C D D
+        A B . B
+        C D . D
+        . . . .
+        C D . D
 
     from which A will be estimated as A' using only B, C, D.
     ```
@@ -116,20 +117,16 @@ class BicvFold(NamedTuple):
 
 
 class BicvSplit:
-    """Shuffled matrix for bi-cross validation, split into 9 matrices in a 3x3
-    pattern. To shuffle and split an existing matrix, use the static method
-    :method:`BicvSplit.from_matrix`"""
+    """Shuffled matrix for bi-cross validation, split into mn matrices in a
+    m x n pattern. To shuffle and split an existing matrix, use the static
+    method :method:`BicvSplit.from_matrix`"""
 
-    FOLD_PERMUTATIONS = [
-        [0, 1, 2],
-        [1, 0, 2],
-        [2, 1, 0]
-    ]
-    """Distinct permutations of submatrix rows/columns for generating folds."""
-
-    # TODO: Consider generalising this to other folds rather than just 9
-
-    def __init__(self, mx: List[pd.DataFrame], i: Optional[int] = None) -> None:
+    def __init__(
+            self,
+            mx: List[pd.DataFrame],
+            design: Tuple[int, int],
+            i: Optional[int] = None,
+    ) -> None:
         """Create a shuffled matrix containing the 9 split matrices. These
         should be in the order
 
@@ -139,24 +136,79 @@ class BicvSplit:
             3, 4, 5
             6, 7, 8
 
-        :param mx: Split matrices
-        :type mx: List[pd.DataFrame]
+        :param mx: Split matrices in a flat list. These should be all of one
+        row, then all of the next row etc.
+        :param design: Number of even splits on rows and columns of mx.
         :param i: Index of the split if one of many
-        :type i: int
         """
 
         # Some validations
-        if len(mx) != 9:
-            raise ValueError("Must provide 9 sub-matrices to BicvSplit")
-        self.__mx: List[List[pd.DataFrame]] = [
-            mx[i:i + 3] for i in range(0, 9, 3)]
+        self.__mx: List[List[pd.DataFrame]] = self.__validate_mx(
+            mx=mx, design=design
+        )
+        self.__design: Tuple[int, int] = design
         self.i = i
+
+    @staticmethod
+    def __validate_mx(
+            mx: List[pd.DataFrame],
+            design: Tuple[int, int]
+    ) -> List[List[pd.DataFrame]]:
+        m, n = design
+        if len(mx) != m * n:
+            raise ValueError(
+                "The number of submatrices provided must match the design. "
+                f"Design {design}, expected {m * n} matrices, received "
+                f"{len(mx)}"
+            )
+        mx_d: List[Tuple] = list(itertools.batched(mx, n))
+        # Ensure indices match along columns and rows
+        row_match: Generator[bool] = (
+            all((row[0].index == d.index).all() for d in row[1:])
+            for row in mx_d
+        )
+        col_match: Generator[bool] = (
+            all((mx_d[0][col].columns == d.columns).all() for d in
+                (mx_d[r][col] for r in range(1, n))
+                )
+            for col in range(n)
+        )
+        if not all(row_match):
+            raise ValueError(
+                "Indices of submatrices in the same row do not match. Check "
+                "that you are providing submatrices in the correct order (all "
+                "submatrices of the same row should be consecutive)"
+            )
+        if not all(col_match):
+            raise ValueError(
+                "Column indices of submatrices in the same column do not "
+                "match. Check that you are providing submatrices in the "
+                "correct order (all submatrices of the same row should be "
+                "consecutive)"
+            )
+        # Check that block sizes are roughly even. It is okay if they are not,
+        # user may have an unusual custom design, but should warn.
+        row_sizes: List[int] = [x[0].shape[0] for x in mx_d]
+        col_sizes: List[int] = [x.shape[1] for x in mx_d[0]]
+        if max(row_sizes) - min(row_sizes) > 1:
+            logger.warning("Uneven row sizes in bicrossvalidation design: %s. "
+                           "If you did not set up a custom design this is "
+                           "likely an error.", row_sizes)
+        if max(col_sizes) - min(col_sizes) > 1:
+            logger.warning("Uneven column sizes in bicrossvalidation design: "
+                           "%s. If you did not set up a custom design this is "
+                           "likely an error.", col_sizes)
+        return [list(x) for x in mx_d]
 
     # TODO: Better slicing implementation
     @property
     def mx(self) -> List[List[pd.DataFrame]]:
         """Submatrices as a 2d list."""
         return self.__mx
+
+    @property
+    def design(self):
+        return self.__design
 
     @property
     def x(self) -> pd.DataFrame:
@@ -166,7 +218,8 @@ class BicvSplit:
 
         :returns: Input matrix
         """
-        return pd.concat([self.row(i, join=True) for i in range(3)], axis=0)
+        return pd.concat([self.row(i, join=True) for i in
+                          range(self.design[0])], axis=0)
 
     @property
     def i(self) -> int:
@@ -187,6 +240,28 @@ class BicvSplit:
         """Size of input matrix."""
         shape: Tuple[int, int] = self.shape
         return shape[0] * shape[1]
+
+    @property
+    def num_folds(self) -> int:
+        return self.design[0] * self.design[1]
+
+    def __block_orderings(self) -> Tuple[List[List[int]], List[List[int]]]:
+        """Generate ordering of indices to be used in generating folds.
+
+        For the purpose of generating folds, we want each block to take the
+        top left position once. The order of the rows (or columns) other than
+        what is first does not matter.
+        """
+
+        m, n = self.design
+        mc: List[List[int]] = [
+            [x] + [i for i in range(m) if x != i] for x in range(m)
+        ]
+        nc: List[List[int]] = [
+            [x] + [i for i in range(n) if x != i] for x in range(n)
+        ]
+        return mc, nc
+
 
     def row(self,
             row: int,
@@ -259,43 +334,50 @@ class BicvSplit:
                  f"force=True to overwrite existing files")
             )
         save_fn = np.savez_compressed if compress else np.savez
-        save_fn(path, *[
-            x.values for x in itertools.chain.from_iterable(self.mx)])
+        # Save submats along with their position as key
+        submat_dict: Dict[str, pd.DataFrame] = {
+            f'{m},{n}': self.mx[m][n] for m, n
+            in itertools.product(range(self.design[0]), range(self.design[1]))
+        }
+        save_fn(path, **submat_dict)
 
     def fold(self,
              i: int) -> BicvFold:
         """Construct a fold of the data
 
-        There are 9 possible folds of the data, this function constructs the
+        There are m*n possible folds of the data, this function constructs the
         i-th fold.
 
-        :param i: Index of the fold to construct, from 0 to 8
+        :param i: Index of the fold to construct, from [0, mn)
         :returns: A, B, C, and D matrices for this fold
         """
-        if i > len(self.FOLD_PERMUTATIONS) ** 2:
+        if i >= self.design[0] * self.design[1]:
             raise IndexError(f"Fold index out of range.")
-        row, col = divmod(i, len(self.FOLD_PERMUTATIONS))
-        row_idx, col_idx = (self.FOLD_PERMUTATIONS[row],
-                            self.FOLD_PERMUTATIONS[col])
+        row, col = divmod(i, self.design[1])
+        row_indices, col_indices = self.__block_orderings()
+        row_idx, col_idx = (row_indices[row],
+                            col_indices[col])
         # Make a rearranged mx list
         mx_i: List[List[pd.DataFrame]] = [
             [self.mx[ri][ci] for ci in col_idx] for ri in row_idx
         ]
         # Make submatrices
         a: pd.DataFrame = mx_i[0][0]
-        b: pd.DataFrame = pd.concat([mx_i[0][1], mx_i[0][2]], axis=1)
-        c: pd.DataFrame = pd.concat([mx_i[1][0], mx_i[2][0]], axis=0)
+        b: pd.DataFrame = pd.concat(mx_i[0][1:], axis=1)
+        c: pd.DataFrame = pd.concat([mx_i[i][0] for
+                                     i in range(1, self.design[0])],
+                                    axis=0)
         d: pd.DataFrame = pd.concat(
-            [pd.concat([mx_i[1][1], mx_i[1][2]], axis=1),
-             pd.concat([mx_i[2][1], mx_i[2][2]], axis=1)],
+            [pd.concat(mx_i[i][1:], axis=1) for
+             i in range(1, self.design[0])],
             axis=0
         )
         return BicvFold(a, b, c, d)
 
     @property
     def folds(self) -> List[BicvFold]:
-        """List of the 9 possible folds of these submatrices."""
-        return [self.fold(i) for i in range(9)]
+        """List of the mn possible folds of these submatrices."""
+        return [self.fold(i) for i in range(self.design[0] * self.design[1])]
 
     @staticmethod
     def save_all_npz(
@@ -351,7 +433,20 @@ class BicvSplit:
             if rei is not None:
                 use_i = rei.group(1)
         with np.load(path, allow_pickle=allow_pickle) as mats:
-            return BicvSplit([pd.DataFrame(x) for x in mats.values()], i=use_i)
+            # The name of each matrix will be the index m, n
+            m, n = (max([int(y) for y in x.split(',')][0] for x in mats.keys()),
+                    max([int(y) for y in x.split(',')][1] for x in mats.keys()))
+            # BicvSplit expects matrices in flat form, with all matrices of
+            # same row first
+            sorted_mats: List[np.ndarray] = [
+                mats[f'{i},{j}'] for i, j
+                in itertools.product(range(m+1), range(n+1))
+            ]
+            return BicvSplit(
+                [pd.DataFrame(x) for x in sorted_mats],
+                i=use_i,
+                design=(m+1, n+1)
+            )
 
     @staticmethod
     def load_all_npz(
@@ -389,14 +484,17 @@ class BicvSplit:
     def from_matrix(
             df: pd.DataFrame,
             n: int = 1,
+            design: Tuple[int, int] = (3, 3),
             random_state: Optional[Union[int, np.random.Generator]] = None
     ) -> Generator[BicvSplit]:
         """Create random shuffles and splits of a matrix
 
         :param df: Matrix to shuffle and split
         :param n: Number of shuffles
+        :param design: Number of blocks to divide rows and columns into.
+        Default is 3x3 9-fold bicrossvalidation.
         :param random_state: Random state, either int seed or numpy Generator;
-            None for default numpy random Generator.
+        None for default numpy random Generator.
         :returns: A generator of  splits, as BicvSplit objects
         """
         rnd: np.random.Generator = np.random.default_rng(random_state)
@@ -407,52 +505,49 @@ class BicvSplit:
             map(BicvSplit.__bicv_shuffle, (df for _ in range(n)))
         )
         splits: Iterable[Iterable[pd.DataFrame]] = (
-            map(BicvSplit.__bicv_split, shuffles)
+            map(BicvSplit.__bicv_split, shuffles, [design] * n)
         )
-        return (BicvSplit(x, i) for i, x in enumerate(splits))
+        return (BicvSplit(x, design, i) for i, x in enumerate(splits))
 
     @staticmethod
-    def __bicv_split(df: pd.DataFrame) -> List[pd.DataFrame]:
-        """Make a 3x3 split of a matrix for bi-cross validation. This is adapted
-        from Clemence's work in bicv_rank.py at Adapted from bicv_rank.py at
-        https://gitlab.inria.fr/cfrioux/enterosignature-paper.
+    def __bicv_split(
+            df: pd.DataFrame,
+            design: Tuple[int, int]
+    ) -> List[pd.DataFrame]:
+        """Make an m x n split of a matrix for bi-cross validation. This is
+        adapted from Clemence's work in bicv_rank.py at
+        https://gitlab.inria.fr/cfrioux/enterosignature-paper, and generalised
+        to non 3x3 designs..
 
         :param df: Matrix to split
-        :type df: pd.DataFrame
-        :return: Matrix split into 3x3 sections
-        :rtype: BicvSplit, which is List[pd.DataFrame] of length 9
+        :param design: Number of even splits to produce of row and columns.
+        :return: Matrix split into m x n sections
         """
-        # Cut the h x h submatrices
-        chunks_feat: int = df.shape[0] // 3
-        chunks_sample: int = df.shape[1] // 3
-        thresholds_feat: List[int] = [chunks_feat * i for i in range(1, 3)]
+        m, n = design
+        # Cut the m x n submatrices
+        chunks_feat: int = df.shape[0] // m
+        chunks_sample: int = df.shape[1] // n
+        thresholds_feat: List[int] = [chunks_feat * i for i in range(1, m)]
         thresholds_feat.insert(0, 0)
         thresholds_feat.append(df.shape[0] + 1)
-        thresholds_sample: List[int] = [chunks_sample * i for i in range(1, 3)]
+        thresholds_sample: List[int] = [chunks_sample * i for i in range(1, n)]
         thresholds_sample.insert(0, 0)
         thresholds_sample.append(df.shape[1] + 1)
 
-        # Return the 9 matrices
-        # TODO: Tidy this a little
-        matrix_nb = [i for i in range(1, 3 * 3 + 1)]
-        all_sub_matrices: List[Optional[pd.DataFrame]] = [None] * 9
-        done = 0
-        row = 0
-        col = 0
-        while row < 3:
-            while col < 3:
-                done += 1
-                all_sub_matrices[done - 1] = df.iloc[
-                                             thresholds_feat[row]:
-                                             thresholds_feat[row + 1],
-                                             thresholds_sample[col]:
-                                             thresholds_sample[col + 1]
-                                             ]
-                col += 1
-            row += 1
-            col = 0
-        assert (len(all_sub_matrices) == len(matrix_nb))
-        return all_sub_matrices
+        # Return the mn matrices
+        sub_mats: List[pd.DataFrame] = []
+        for row in range(m):
+            for col in range(n):
+                sm: pd.DataFrame = (
+                    df.iloc[
+                        thresholds_feat[row]:
+                        thresholds_feat[row + 1],
+                        thresholds_sample[col]:
+                        thresholds_sample[col + 1]
+                    ]
+                )
+                sub_mats.append(sm)
+        return sub_mats
 
     @staticmethod
     def __bicv_shuffle(
@@ -489,8 +584,9 @@ class NMFParameters(NamedTuple):
     validation. See sklearn NMF documentation for more detail on parameters."""
     x: Optional[Union[BicvSplit, pd.DataFrame]]
     """For a simple decomposition, a matrix as a dataframe. For a bi-cross
-    validation iteration, this should be the shuffled matrix split into 9 parts.
-    When returning results and keep_mats is False, this will be set to None to
+    validation iteration, this should be the shuffled matrix split into mn 
+    parts, where m is the number of parts along rows, n along columns. When 
+    returning results and keep_mats is False, this will be set to None to
     avoid passing and saving large data."""
     rank: int
     """Rank of the decomposition."""
@@ -510,7 +606,7 @@ class NMFParameters(NamedTuple):
     """Beta loss function for NMF decomposition."""
     init: str = "nndsvdar"
     """Initialisation method for H and W matrices on first step. Defaults to 
-    non-negative SVD with small random values added."""
+    randomised non-negative SVD with small random values added to 0s."""
 
     @property
     def log_str(self) -> str:
@@ -562,8 +658,8 @@ class NMFParameters(NamedTuple):
 
 class BicvResult(NamedTuple):
     """Results from a single bi-cross validation run. For each BicvSplit there
-    are 9 folds, for which the top left submatrix (A) is estimated (A') using
-    the other portions."""
+    are mn folds (for m splits on rows, n splits on columns), for which the top
+    left submatrix (A) is estimated (A') using the other portions."""
     parameters: NMFParameters
     """Parameters used during this run."""
     a: Optional[List[np.ndarray]]
@@ -704,26 +800,24 @@ def rank_selection(x: pd.DataFrame,
                    max_iter: Optional[int] = None,
                    beta_loss: Optional[str] = None,
                    init: Optional[str] = None,
+                   design: Optional[Tuple[int, int]] = (3, 3),
                    progress_bar: bool = True) -> Dict[int, List[BicvResult]]:
     """Bi-cross validation for rank selection.
 
-    Run 9-fold bi-cross validation across a range of ranks. Briefly, the
+    Run mn-fold bi-cross validation across a range of ranks. Briefly, the
     input matrix is shuffled `shuffles` times. Each shuffle is then split
-    into 9 submatrices. The rows and columns of submatrices are permuted,
-    and the top left submatrix (A) is estimated through NMF decompositions of
-    the other matrices produced an estimate A'. Various measures of how well
-    A' reconstructed A are provided, see :class:`BicvResult` for details
-    on the measures.
+    into mxn submatrices (m splits on rows, n split on columns. The rows and
+    columns of submatrices are permuted, and the top left submatrix (A) is
+    estimated through NMF decompositions of the other matrices producing an
+    estimate A'. Various measures of how well A' reconstructed A are
+    provided, see :class:`BicvResult` for details on the measures.
 
-    No multiprocessing is used, as a majority of build of scikit-learn
+    No multiprocessing is used, as a majority of build of scikit-learn seem to
     make good use of multiple processors anyway (depending on compilation of
     underlying libraries).
 
     This method returns a dictionary with each rank as a key, and a list
     containing one :class:`BicvResult` for each shuffle.
-
-    Values other than 9 for folds are possible, currently this package only
-    supports 9.
 
     :param x: Input matrix.
     :param ranks: Ranks of k to be searched. Iterable of unique ints.
@@ -741,6 +835,8 @@ def rank_selection(x: pd.DataFrame,
     :param init: Initialisation method for H and W during decomposition.
         Used only where one of the matrices during bi-cross steps is not
         fixed. See sklearn documentation for values.
+    :param design: How many blocks to split the input matrix into on rows and
+    columns respectively. Defaults to 3x3 9-fold design.
     :param progress_bar: Show a progress bar while running.
     :returns: Dictionary with entry for each rank, containing a list of
         results for each shuffle (as a :class:`BicvResult` object)
@@ -759,21 +855,19 @@ def rank_selection(x: pd.DataFrame,
         args['beta_loss'] = beta_loss
     if init is not None:
         args['init'] = init
+    if design is None:
+        design = (3, 3)
 
     # Set up random generator for this whole run
     rng: np.random.Generator = np.random.default_rng(seed)
 
     # Generate shuffles of data
     shuffle_gen: Generator[BicvSplit] = BicvSplit.from_matrix(
-        x, random_state=rng, n=shuffles)
+        x, random_state=rng, n=shuffles, design=design)
 
     rank_list: List[int] = sorted(list(ranks), reverse=True)
 
     # Make a generator of parameter objects to pass to bicv
-    # params: Iterable[NMFParameters] = itertools.chain.from_iterable(
-    #     [[NMFParameters(x=x, rank=k, seed=rng, **args) for x in shuffle_gen]
-    #      for k in sorted(ranks, reverse=True)]
-    # )
     params: Iterable[NMFParameters] = itertools.chain.from_iterable(
         ((NMFParameters(x=x, rank=k, seed=rng, **args) for k in rank_list)
          for x in shuffle_gen)
@@ -1152,16 +1246,17 @@ def regu_selection(x: pd.DataFrame,
                    max_iter: Optional[int] = None,
                    beta_loss: Optional[str] = None,
                    init: Optional[str] = None,
+                   design: Tuple[int, int] = (3, 3),
                    progress_bar: bool = True
                    ) -> Tuple[float, Dict[float, List[BicvResult]]]:
     """Bi-cross validation for regularisation selection.
 
-    Run 9-fold bi-cross validation across a range of regularisation ratios,
+    Run mn-fold bi-cross validation across a range of regularisation ratios,
     for a single rank. For a brief description of bi-cross validation see
     :func:`rank_selecton`
 
     No multiprocessing is used, as a majority of build of scikit-learn
-    make good use of multiple processors anyway.
+    seem to make good use of multiple processors anyway.
 
     This method returns a tuple with
 
@@ -1169,9 +1264,6 @@ def regu_selection(x: pd.DataFrame,
     the ES paper
     * a dictionary with each alpha value as a key, and a list containing one
     :class:`BicvResult` for each shuffle
-
-    Values other than 9 for folds are possible, however currently this package
-    only supports 9.
 
     :param x: Input matrix.
     :param rank: Rank of decomposition.
@@ -1200,6 +1292,8 @@ def regu_selection(x: pd.DataFrame,
         Used only where one of the matrices during bi-cross steps is not
         fixed. See sklearn documentation for values.
     :param progress_bar: Show a progress bar while running.
+    :param design: Number of blocks to split input into on rows and columns
+    respectively for bicrossvalidation,
     :returns: Dictionary with entry for each rank, containing a list of
         results for each shuffle (as a :class:`BicvResult` object)
     """
@@ -1218,6 +1312,8 @@ def regu_selection(x: pd.DataFrame,
         args['beta_loss'] = beta_loss
     if init is not None:
         args['init'] = init
+    if design is None:
+        design = (3, 3)
 
     # We need result at alpha 0.0 for later decision on alpha value, so force
     # selected alphas to include 0. Also do some sanity checking such as
@@ -1237,7 +1333,7 @@ def regu_selection(x: pd.DataFrame,
 
     # Generate shuffles of data
     shuffles_gen: Generator[BicvSplit] = BicvSplit.from_matrix(
-        x, random_state=rng, n=shuffles)
+        x, random_state=rng, n=shuffles, design=design)
 
     # Make a generator of parameter objects to pass to bicv
     params: List[NMFParameters] = list(itertools.chain.from_iterable(
@@ -1369,9 +1465,10 @@ def bicv(params: Optional[NMFParameters] = None, **kwargs) -> BicvResult:
     if params is None:
         params = NMFParameters(**kwargs)
 
+    fold: int = params.x.num_folds
     runs: Iterable[BicvResult] = map(__bicv_single,
-                                     (params for _ in range(9)),
-                                     (params.x.fold(i) for i in range(9))
+                                     (params for _ in range(fold)),
+                                     (params.x.fold(i) for i in range(fold))
                                      )
 
     # Combine results from each fold
@@ -1818,6 +1915,18 @@ def _write_symlink(path: pathlib.Path,
               show_default=True,
               help="""Method to use when intialising H and W for 
               decomposition.""")
+@click.option("--design",
+              required=False,
+              type=int,
+              nargs=2,
+              default=(3,3),
+              show_default=True,
+              help="Two numbers stating how to split the input matrix for "
+                   "bicrossvalidation. The first is the number of even splits "
+                   "to make along the rows; the second along the columns. "
+                   "This will results in mn folds for each shuffle. Provide "
+                   "in the format '--design 4 3'. More fold means more "
+                   "iterations per shuffle, so increases execution time.")
 def cli_rank_selection(
         input: str,
         output_dir: str,
@@ -1834,14 +1943,16 @@ def cli_rank_selection(
         max_iter: int,
         beta_loss: str,
         init: str,
+        design: Tuple[int, int]
 ) -> None:
-    """Rank selection for NMF using 9 fold bi-cross validation
+    """Rank selection for NMF using mn-fold bi-cross validation
 
     Attempt to identify a suitable rank k for decomposition of input matrix X.
     This is done by shuffling the matrix a number of times, and for each
-    shuffle diving it into 9 submatrices. Each of these nine is held out and
-    and estimate learnt from the remaining matrices, and the quality of the
-    estimated matrix used to identify a suitable rank.
+    shuffle diving it into m x n submatrices (m splits on rows, n splits on
+    columns). Each of these nine is held out and an estimate learnt from the
+    remaining matrices, and the quality of the estimated matrix used to
+    identify a suitable rank.
 
     The underlying NMF implementation is from scikit-learn, and there is more
     documentation available there for many of the NMF specific parameters there.
@@ -1883,6 +1994,7 @@ def cli_rank_selection(
         f"Max Iterations:   {max_iter}\n"
         f"Beta Loss:        {beta_loss}\n"
         f"Initialisation:   {init}\n"
+        f"Design:           {design}"
     )
     logger.info("cvanmf rank selection")
     logger.info(param_str)
@@ -1897,7 +2009,8 @@ def cli_rank_selection(
         max_iter=max_iter,
         beta_loss=beta_loss,
         init=init,
-        progress_bar=progress
+        progress_bar=progress,
+        design=design
     )
 
     # Write output
@@ -2010,6 +2123,18 @@ def cli_rank_selection(
               regularisation calculation. The alpha values reported in the 
               output will be the scaled alpha values."""
               )
+@click.option("--design",
+              required=False,
+              type=int,
+              nargs=2,
+              default=(3, 3),
+              show_default=True,
+              help="Two numbers stating how to split the input matrix for "
+                   "bicrossvalidation. The first is the number of even splits "
+                   "to make along the rows; the second along the columns. "
+                   "This will results in mn folds for each shuffle. Provide "
+                   "in the format '--design 4 3'. More fold means more "
+                   "iterations per shuffle, so increases execution time.")
 @click.argument("alpha",
                 nargs=-1,
                 type=float)
@@ -2027,7 +2152,8 @@ def cli_regu_selection(
         max_iter: int,
         beta_loss: str,
         init: str,
-        scale: bool
+        scale: bool,
+        design: Tuple[int, int]
 ) -> None:
     """Regularisation selection for NMF on ALPHA 9 fold bi-cross validation
 
@@ -2080,7 +2206,8 @@ def cli_regu_selection(
         f"Max Iterations:   {max_iter}\n"
         f"Beta Loss:        {beta_loss}\n"
         f"Initialisation:   {init}\n"
-        f"Scale Regu:       {scale}"
+        f"Scale Regu:       {scale}\n"
+        f"Design:           {design}\n"
     )
     logger.info(param_str)
 
@@ -2097,7 +2224,8 @@ def cli_regu_selection(
         beta_loss=beta_loss,
         init=init,
         progress_bar=progress,
-        scale_samples=scale
+        scale_samples=scale,
+        design=design
     )
 
     # Write output
