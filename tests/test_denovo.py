@@ -1,4 +1,4 @@
-"""Tests for denovo ES generation."""
+"""Tests for denovo signature generation."""
 import itertools
 import pathlib
 import re
@@ -194,24 +194,17 @@ def is_decomposition_close(a: Decomposition, b: Decomposition) -> bool:
         pytest.fail("Colors not equivalent")
 
 
-def are_decompositions_close(a: Dict[int, List[Decomposition]],
-                             b: Dict[int, List[Decomposition]]):
-    """Are multiple decompositions equivalent?"""
-
-    # Flatten each and compare elementwise
-    paired = list(zip(
-        itertools.chain.from_iterable(a.values()),
-        itertools.chain.from_iterable(b.values())
-    ))
-    for a_i, b_i in paired:
-        is_decomposition_close(a_i, b_i)
-
-
-def test_bicv_split(small_overlap_blocks):
-    """Shuffling and splitting working as intended?"""
-    df: pd.DataFrame = small_overlap_blocks
+def is_bicv_split_ok(
+        df: pd.DataFrame,
+        design: Optional[Tuple[int, int]]
+) -> bool:
+    """Test whether two decomposition are equal (within tolerance). Used
+    for checking equivalence between source and loaded versions."""
+    # Check equivalence of w, h, and x matrices, as all other properties are
+    # calculated from these
+    __tracebackhide__ = False
     shuffles: List[BicvSplit] = list(BicvSplit.from_matrix(
-        df=df, n=2, random_state=4298
+        df=df, n=2, random_state=4298, design=design
     ))
 
     # Overall number of entries in matrix is consistent
@@ -245,24 +238,53 @@ def test_bicv_split(small_overlap_blocks):
     # raise an exception
     with pytest.raises(ValueError):
         mx8 = list(itertools.chain.from_iterable(shuffles[0].mx))[:-1]
-        _ = BicvSplit(mx8)
+        _ = BicvSplit(mx8, design=design)
+
+    # Attempting to initialise with jumbled up submatrices should raise an
+    # exception
+    with pytest.raises(ValueError):
+        mx9 = list(itertools.chain.from_iterable(shuffles[0].mx))
+        mx9[2] = mx9[-3]
+        _ = BicvSplit(mx9, design=design)
 
     # Getting a row without joining
     row_list: List[pd.DataFrame] = shuffles[0].row(0, join=False)
     col_list: List[pd.DataFrame] = shuffles[1].col(0, join=False)
     assert isinstance(row_list, list), \
         "Row not returned as list when join=False"
+    assert len(row_list) == design[1], "Incorrect number of columns"
     assert isinstance(col_list, list), \
         "Column not returned as list when join=False"
+    assert len(col_list) == design[0], "Incorrect number of rows"
 
     # Out of range fold
+    m, n = design
     with pytest.raises(IndexError):
-        shuffles[0].fold(9)
+        shuffles[0].fold(m*n+1)
 
     folds: List[BicvFold] = shuffles[0].folds
-    assert len(folds) == 9, "Should have 9 folds"
+    assert len(folds) == m*n, f"Should have {m*n} folds"
     assert all([isinstance(x, BicvFold) for x in folds]), \
         "folds property returns incorrect type"
+
+
+def are_decompositions_close(a: Dict[int, List[Decomposition]],
+                             b: Dict[int, List[Decomposition]]):
+    """Are multiple decompositions equivalent?"""
+
+    # Flatten each and compare elementwise
+    paired = list(zip(
+        itertools.chain.from_iterable(a.values()),
+        itertools.chain.from_iterable(b.values())
+    ))
+    for a_i, b_i in paired:
+        is_decomposition_close(a_i, b_i)
+
+
+def test_bicv_split(small_overlap_blocks):
+    """Shuffling and splitting working as intended?"""
+    is_bicv_split_ok(small_overlap_blocks, (3, 3))
+    is_bicv_split_ok(small_overlap_blocks, (5, 4))
 
 
 def test_bicv_folds(small_overlap_blocks):
