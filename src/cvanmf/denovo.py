@@ -479,7 +479,7 @@ class BicvSplit:
             key=lambda x: int(x.stem.split("_")[-1])
         )
 
-        for i, file in enumerate(npz_pth.glob("*.npz")):
+        for i, file in enumerate(files):
             shuffle: BicvSplit = BicvSplit.load_npz(path=pathlib.Path(file),
                                                     allow_pickle=allow_pickle)
             if fix_i:
