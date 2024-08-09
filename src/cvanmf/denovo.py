@@ -473,6 +473,12 @@ class BicvSplit:
             pathlib.Path(path)
         )
         logger.info("Loading shuffles from %s", str(npz_pth))
+        # Ensure shuffles are returned in the same order as saved
+        files: List[pathlib.Path] = sorted(
+            list(npz_pth.glob("*.npz")),
+            key=lambda x: int(x.stem.split("_")[-1])
+        )
+
         for i, file in enumerate(npz_pth.glob("*.npz")):
             shuffle: BicvSplit = BicvSplit.load_npz(path=pathlib.Path(file),
                                                     allow_pickle=allow_pickle)
