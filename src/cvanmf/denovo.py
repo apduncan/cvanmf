@@ -1646,6 +1646,23 @@ def _sparsity(x: np.ndarray) -> float:
     return 1 - (np.count_nonzero(x) / x.size)
 
 
+def _stability_remove_rank_one(
+        decompositions: Dict[int, List[Decomposition]]
+) -> Dict[int, List[Decomposition]]:
+    """Remove rank 1 from a dictionary of decompositions, as stability
+    measures cannot be meaningfully generated for rank 1.
+    """
+
+    if 1 not in decompositions:
+        return decompositions
+    logger.warning("Rank 1 removed for stability based rank selection "
+                   "(cophenetic correlation, dispersion) as coefficients "
+                   "not meaningful for one signature.")
+    return {
+        i: l for i, l in decompositions.items() if i != 1
+    }
+
+
 def cophenetic_correlation(
         decompositions: Dict[int, List[Decomposition]],
         on: Literal['h', 'w'] = 'h'
@@ -1670,12 +1687,15 @@ def cophenetic_correlation(
     :returns: Series indexed by rank and with value being the ccc.
     """
 
+    dc_use: Dict[int, List[Decomposition]] = (
+        _stability_remove_rank_one(decompositions)
+    )
     return pd.Series(
-        index=decompositions.keys(),
+        index=dc_use.keys(),
         data=(
             _cophenetic_correlation(
                 _cbar(x.consensus_matrix(on=on) for x in k))
-            for k in decompositions.values()
+            for k in dc_use.values()
         ),
         name="cophenetic_correlation"
     )
@@ -1709,12 +1729,15 @@ def dispersion(
         coefficient.
     """
 
+    dc_use: Dict[int, List[Decomposition]] = (
+        _stability_remove_rank_one(decompositions)
+    )
     return pd.Series(
-        index=decompositions.keys(),
+        index=dc_use.keys(),
         data=(
             _dispersion(
                 _cbar(x.consensus_matrix(on=on) for x in k))
-            for k in decompositions.values()
+            for k in dc_use.values()
         ),
         name="dispersion"
     )

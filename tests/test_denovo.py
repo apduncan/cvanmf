@@ -1142,4 +1142,35 @@ def test_plot_stability_rank_selection(
     plt: plotnine.ggplot = plot_stability_rank_selection(
         small_decompositions_random)
     plt.save(tmp_path / "plt_stability.png")
-    ff = 66
+
+
+def test_rank_selection_k1(
+        small_overlap_blocks
+):
+    """Test that both bicv and stability rank selection function with k=1."""
+    bicv_res: Dict[int, List[BicvResult]] = rank_selection(
+        small_overlap_blocks,
+        ranks=range(1, 6),
+        shuffles=5,
+        progress_bar=False
+    )
+    bicv_rank: Dict[str, int] = suggest_rank(bicv_res)
+    assert {'cosine_similarity', 'r_squared'} == set(bicv_rank.keys())
+    assert all(not np.isnan(x) for x in bicv_rank.values())
+
+    decomps: Dict[int, List[Decomposition]] = decompositions(
+        small_overlap_blocks,
+        ranks=range(1, 6),
+        random_starts=5,
+        progress_bar=False
+    )
+    stab_rank: Dict[str, int] = suggest_rank_stability(decomps)
+    assert {'cophenetic_correlation', 'dispersion'} == set(stab_rank.keys())
+    assert all(isinstance(x, int) for x in stab_rank.values())
+
+    # Ensure cophenetic correlation and dispersion remove rank 1 from
+    # calculations
+    disp: pd.Series = dispersion(decomps)
+    coph: pd.Series = cophenetic_correlation(decomps)
+    assert 1 not in disp.index
+    assert 1 not in coph.index
