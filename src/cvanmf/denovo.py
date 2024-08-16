@@ -1071,6 +1071,8 @@ def plot_rank_selection(results: Dict[Union[int, float], List[BicvResult]],
                         geom: str = 'box',
                         summarise: Literal['mean', 'median'] = 'mean',
                         suggested_rank: bool = True,
+                        stars_at: Optional[Dict[str, int]] = None,
+                        star_size: int = 4,
                         jitter: bool = None,
                         jitter_size: float = 0.3,
                         n_col: int = None,
@@ -1090,23 +1092,27 @@ def plot_rank_selection(results: Dict[Union[int, float], List[BicvResult]],
     exclude. You can also use show_all to show all the measures.
 
     :param results: Dictionary of results, with rank as key and a list of
-        :class:`BicvResult` for that rank as value
+    :class:`BicvResult` for that rank as value
     :param exclude: Measures from :class:`BicvResult` not to plot.
     :param include: Measures from :class:`BicvResult` to plot.
     :param show_all: Show all measures, ignoring anything set in include or
-        exclude.
+    exclude.
     :param geom: Type of plot to draw. Accepts either 'box' or 'violin'
     :param summarise: How to summarise the statistics across the folds
-        of a given shuffle.
+    of a given shuffle.
     :param suggested_rank: Estimate rank using :func:`suggest_rank`.
+    :param stars_at: Manually define x-axis values at which to place stars
+    above the main plot. Mainly used to allow :method:`plot_regu_selection`
+    to pass where to plot stars for regularisation selection.
+    :param star_size: Size of star indicating suggested rank.
     :param jitter: Draw individual points for each shuffle above the main plot.
     :param jitter_size: Size of jitter points.
     :param n_col: Number of columns in the plot. If blank, attempts to guess
-        a sensible value.
+    a sensible value.
     :param xaxis: Value to plot along the x-axis. "rank" for rank selection,
-        "alpha" for regularisation selection.
+    "alpha" for regularisation selection.
     :param rotate_x_labels: Degrees to rotate x-axis labels by. If None
-        will rotate if x-axis is float.
+    will rotate if x-axis is float.
     :param **kwargs: Passed to :func:`suggest_ranks`.
     :return: :class:`plotnine.ggplot` instance
     """
@@ -1185,11 +1191,27 @@ def plot_rank_selection(results: Dict[Union[int, float], List[BicvResult]],
                              **geom_params)
             + plotnine.xlab(xaxis)
             + plotnine.ylab("Value")
-            + plotnine.guides(fill=None)
+            + plotnine.guides(fill="none")
+            + plotnine.scale_fill_discrete()
     )
 
-    # Add automated rank suggestion
+    # Add manually defined star positions
+    if stars_at is not None:
+        logger.debug("Adding stars from stars_at parameter")
+        star_df: pd.DataFrame = (
+            pd.Series(stars_at)
+            .to_frame(xaxis)
+            .reset_index(names=['measure'])
+        )
+        plot = __add_stars(
+            plot,
+            star_df=star_df,
+            size=star_size,
+            offset=0.1
+        )
+    # Add automated rank suggestion if requested
     if xaxis =="rank" and suggested_rank == True:
+        logger.debug("Adding autoamtic rank suggestion stars")
         suggested: Dict[str, int] = suggest_rank(full_df, **kwargs)
         suggested_df: pd.DataFrame = (
             pd.Series(suggested)
@@ -1197,24 +1219,10 @@ def plot_rank_selection(results: Dict[Union[int, float], List[BicvResult]],
             .reset_index(names='measure')
         )
         suggested_df = suggested_df.loc[suggested_df['measure'].isin(measures)]
-        # Determine the x-position of the selected rank, as the line gets
-        # plotted at position n along the axis
-        ranks_ordered: List[int] = sorted(df['rank'].unique())
-        suggested_df['rank_pos'] = suggested_df['rank'].apply(
-            lambda x: (np.nan if x is None or np.isnan(x) else
-                       ranks_ordered.index(x) + 1))
-
-        plot = (
-            plot
-            + plotnine.geom_vline(
-                data=suggested_df,
-                mapping=plotnine.aes(xintercept="rank_pos"),
-                linetype="dashed",
-                color="black",
-                alpha=.75,
-                size=1
-            )
-        )
+        plot = __add_stars(plot,
+                          star_df=suggested_df[['rank', 'measure']],
+                          size=star_size,
+                          offset=0.1)
 
     # Determine whether the xaxis values are floats, and so axis labels should
     # be rounded for display
@@ -1239,6 +1247,48 @@ def plot_rank_selection(results: Dict[Union[int, float], List[BicvResult]],
 
     return plot
 
+@staticmethod
+def __add_stars(
+        plt: plotnine.ggplot,
+        star_df: pd.DataFrame,
+        size: float,
+        offset: float
+) -> plotnine.ggplot:
+    """Add stars indicating suggested value to a plot showing selection
+    results. star_df should have two olumns: measure, defining the facet
+    value to plot the star on; a second column with any name giving the
+    x-axis position to plot on."""
+
+    x_lab: str = next(x for x in star_df.columns if x != 'measure')
+
+    star_ypos: pd.DataFrame = (
+            plt.data[['measure', 'value']]
+            .groupby(['measure'])
+            .apply(lambda x: x.max() + (offset*(x.max()-x.min())))
+        )
+    # Using categorical x-axes so need to convert to index of value
+    val_ordered: List = sorted(plt.data[x_lab].unique())
+    star_df['idx'] = star_df[x_lab].apply(
+        lambda x: (np.nan if x is None or np.isnan(x) else
+                   val_ordered.index(x) + 1))
+    plt_df: pd.DataFrame = star_df.merge(
+        star_ypos,
+        left_on='measure',
+        right_on='measure',
+        how='left'
+    )
+    plt = (
+        plt
+        + plotnine.geom_point(
+            data=plt_df,
+            mapping=plotnine.aes(x="idx", y="value", fill="measure"),
+            color="black",
+            shape="*",
+            size=size
+        )
+    )
+    return plt
+
 
 def regu_selection(x: pd.DataFrame,
                    rank: int,
@@ -1247,7 +1297,6 @@ def regu_selection(x: pd.DataFrame,
                    shuffles: int = 100,
                    keep_mats: Optional[bool] = None,
                    seed: Optional[Union[int, np.random.Generator]] = None,
-                   alpha: Optional[float] = None,
                    l1_ratio: Optional[float] = 1.0,
                    max_iter: Optional[int] = None,
                    beta_loss: Optional[str] = None,
@@ -1428,6 +1477,7 @@ def suggest_alpha(regu_results: Dict[float, List[BicvResult]]) -> float:
 
 def plot_regu_selection(
         regu_res: Union[Tuple[float, Dict], Dict],
+        alpha_star: bool = True,
         **kwargs
 ) -> plotnine.ggplot:
     """Plot regularisation selection results.
@@ -1435,6 +1485,10 @@ def plot_regu_selection(
     Takes a result from :function:`regu_selection` and passes to
     :function:`plot_rank_selection` to plot with alpha values along the
     xaxis. Consequently, pass any parameters for plotting as kwargs.
+
+    :param regu_res: Results from :function:`regu_selection`.
+    :param alpha_star: Suggest and plot a suitable alpha value using
+    :function:`suggest_alpha`.
     """
 
     # regu_selection returns a tuple with best alpha value and dictionary of
@@ -1442,6 +1496,7 @@ def plot_regu_selection(
     # Primarily, this is as I kept forgetting to only pass the dict and it
     # annoyed me.
     pass_res: Dict[float, List[BicvResult]] = {}
+    suggested: Optional[float] = None
     if isinstance(regu_res, tuple):
         if not len(regu_res) == 2:
             raise ValueError("Unexpected regularisation result tuple format, "
@@ -1450,12 +1505,23 @@ def plot_regu_selection(
             raise ValueError("Unexpected regularisation result tuple format, "
                              "expected length 2 tuple with float, dict.")
         pass_res = regu_res[1]
+        suggested = regu_res[0]
     elif isinstance(regu_res, dict):
         pass_res = regu_res
     else:
         raise ValueError("Unexpected regularisation result format, expected "
                          "either dict, or tuple of float, dict.")
-    return plot_rank_selection(**kwargs, results=pass_res, xaxis="alpha")
+    if alpha_star:
+        stars_at: Dict[str, float] = dict(
+            r_squared=suggest_alpha(regu_res) if suggested is None else
+            suggested
+        )
+
+    return plot_rank_selection(
+        **kwargs, results=pass_res, xaxis="alpha",
+        stars_at=None if not alpha_star else stars_at,
+        include=['r_squared']
+    )
 
 
 def bicv(params: Optional[NMFParameters] = None, **kwargs) -> BicvResult:
