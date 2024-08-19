@@ -552,6 +552,10 @@ def test_plot_relative_weight(
     rnd_cat.name = "Category"
     plt = small_decomposition.plot_relative_weight(
         group=rnd_cat,
+        group_colors=pd.Series(
+            ['red', 'green', 'blue'],
+            index=list(rnd_cat.unique())
+        ),
         model_fit=True,
         heights=dict(ribbon=0.2, bar=0.8, labels=0.4),
         sample_label_size=6.0,

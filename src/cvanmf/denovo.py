@@ -3348,7 +3348,8 @@ class Decomposition:
 
     def plot_relative_weight(
             self,
-            group: Optional[Union[pd.Series]] = None,
+            group: Optional[pd.Series] = None,
+            group_colors: Optional[pd.Series] = None,
             model_fit: bool = True,
             heights: Union[Dict[str, float], Iterable[float]] = None,
             width: float = 6.0,
@@ -3376,15 +3377,17 @@ class Decomposition:
         Patchworklib can be slow for large plots.
 
         :param group: Categorical metadata for each sample to plot on ribbon
-            at the bottom
+        at the bottom
+        :param group_colors: Colour to associate with each of the metadata
+        categories.
         :param model_fit: Include a top row indicating model fit per sample
         :param heights: Height in inches for each component of the plot. Only
-            used when including model fit or ribbon. Specify as a dictionary
-            with keys 'dot', 'bar', or 'ribbon', or a list with heights for
-            the elements included from top to bottom.
+        used when including model fit or ribbon. Specify as a dictionary
+        with keys 'dot', 'bar', or 'ribbon', or a list with heights for
+        the elements included from top to bottom.
         :param width: Width used when combining multiple elements
         :param sample_label_size: Size for sample labels. Set to 0 to remove
-            sample labels.
+        sample labels.
         :return: A plotnine ggplot or patchwork Bricks object
         """
         # Parse height arguments
@@ -3465,8 +3468,8 @@ class Decomposition:
                           heights['ribbon'])
             ribbon: mp.Colors = mp.Colors(
                 group,
-                label=group.name,
-                legend_kws=dict(ncols=legend_cols_grp)
+                legend_kws=dict(ncols=legend_cols_grp),
+                **self.__group_colours(group_colors, group)
             )
             wb.add_top(ribbon, size=heights['ribbon'], pad=0.1)
 
@@ -3493,6 +3496,32 @@ class Decomposition:
         wb.add_legends(side=legend_side)
         return wb
 
+
+    def __group_colours(
+            self,
+            group_color: pd.Series,
+            group: pd.Series
+    ) -> Dict[str, Any]:
+        """Make keywords arg to pass to Marsilea for colour ribbion plotting.
+
+        If no manual colour specified, returns an empty dict so will get
+        default Marsilea behaviour. If a Series linking value and colour is
+        given, will remove any missing categories (to keep legend tidy) and
+        add any missing ones (to avoid crashes)
+        """
+
+        if group_color is None:
+            return dict()
+        # Reduce to only categories which are in the decomposition
+        group_dc: pd.Series = group.loc[group.index.isin(self.h.columns)]
+        group_col: pd.Series = group_color.loc[group_color.index.isin(group_dc)]
+        # Add any categories which are not included, and set to grey
+        missing: List[str] = list(set(group.unique()) - set(
+            group_col.index.unique()))
+        group_col = pd.concat(
+            [group_col, pd.Series(['grey'] * len(missing), missing)]
+        )
+        return dict(palette=group_col)
 
     def pcoa(self,
              on: Union[
