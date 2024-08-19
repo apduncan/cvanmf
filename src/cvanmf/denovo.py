@@ -93,6 +93,10 @@ DEF_RELATIVE_WEIGHT_HEIGHTS: Dict[str, float] = dict(
 """Default heights for relative weight plot"""
 DEF_ALPHAS: List[float] = [2 ** i for i in range(-5, 2)]
 """Default alpha values for regularisation selection"""
+DEF_RANKSEL_PALETTE: plotnine.scale_fill_brewer = (
+    plotnine.scale_fill_brewer(type="qual", limits=DEF_SELECTION_ORDERING,
+                               palette="Set2")
+)
 
 
 class BicvFold(NamedTuple):
@@ -190,11 +194,14 @@ class BicvSplit:
         # user may have an unusual custom design, but should warn.
         row_sizes: List[int] = [x[0].shape[0] for x in mx_d]
         col_sizes: List[int] = [x.shape[1] for x in mx_d[0]]
-        if max(row_sizes) - min(row_sizes) > 1:
+        # Allow to be within the remainder
+        total_col, total_row = sum(col_sizes), sum(row_sizes)
+        c_r, r_r = total_col % len(col_sizes), total_row % len(row_sizes)
+        if max(row_sizes) - min(row_sizes) > r_r:
             logger.warning("Uneven row sizes in bicrossvalidation design: %s. "
                            "If you did not set up a custom design this is "
                            "likely an error.", row_sizes)
-        if max(col_sizes) - min(col_sizes) > 1:
+        if max(col_sizes) - min(col_sizes) > c_r:
             logger.warning("Uneven column sizes in bicrossvalidation design: "
                            "%s. If you did not set up a custom design this is "
                            "likely an error.", col_sizes)
@@ -1192,7 +1199,7 @@ def plot_rank_selection(results: Dict[Union[int, float], List[BicvResult]],
             + plotnine.xlab(xaxis)
             + plotnine.ylab("Value")
             + plotnine.guides(fill="none")
-            + plotnine.scale_fill_discrete()
+            + DEF_RANKSEL_PALETTE
     )
 
     # Add manually defined star positions
@@ -4912,7 +4919,7 @@ def _is_series_continuous(series: pd.Series) -> bool:
 def _is_series_discrete(series: pd.Series) -> bool:
     """True if a column is object type, and type is string, or there are
     less than 3n/4 distinct values, or is pd.Categorical."""
-    if series.dtype == pd.CategoricalDtype:
+    if isinstance(series.dtype, pd.CategoricalDtype):
         return True
     if series.dtype == object:
         if isinstance(series[0], str):
