@@ -2910,6 +2910,7 @@ class Decomposition:
         """Plotnine scale for color aesthetic using signature colors."""
         color_dict: Dict[str, str] = dict(zip(
             self.names, self.colors))
+        color_dict['modelfit'] = 'white'
         color_scale = plotnine.scale_color_manual(
             values=list(color_dict.values()),
             limits=list(color_dict.keys())
@@ -2921,6 +2922,7 @@ class Decomposition:
         """Plotnine scale for fill aesthetic using signature colors."""
         color_dict: Dict[str, str] = dict(zip(
             self.names, self.colors))
+        color_dict['modelfit'] = 'white'
         fill_scale = plotnine.scale_fill_manual(
             values=list(color_dict.values()),
             limits=list(color_dict.keys())
@@ -3406,8 +3408,8 @@ class Decomposition:
             else:
                 parts: List[str] = [x for x in [
                     'dot' if model_fit else None,
-                    'bar',
                     'ribbon' if group is not None else None,
+                    'bar',
                     'label'
                 ] if x is not None]
                 vals: List[float] = list(heights)
@@ -3426,6 +3428,13 @@ class Decomposition:
         else:
             heights = {}
         heights = DEF_RELATIVE_WEIGHT_HEIGHTS | heights
+        # Remove any parts not needed
+        if not model_fit:
+            _ = heights.pop('dot')
+        if group is None:
+            _ = heights.pop('ribbon')
+        if sample_label_size == 0:
+            _ = heights.pop('label')
         logger.debug("Heights %s", heights)
 
         # Get all required dataframes and match order
@@ -3438,10 +3447,10 @@ class Decomposition:
             grp_extra: Set[str] = set(group.index) - set(rel_df.columns)
             if len(grp_missing) > 0:
                 logger.warning("%s samples missing from group, replaced with"
-                                "NA.")
+                                "NA.", len(grp_missing))
             if len(grp_extra) > 0:
                 logger.warning("%s samples in group not in decompositions, "
-                                "removed from group.")
+                                "removed from group.", len(grp_extra))
             groupn = pd.concat(
                 [group, pd.Series({x: "NA" for x in grp_missing})])
             groupn.name = group.name
@@ -3456,6 +3465,7 @@ class Decomposition:
             rel_df,
             legend_kws=dict(title="Signature", ncols=legend_cols_sig),
             colors=dict(zip(self.names, self.colors)),
+            width=1.0
         )
         wb: ma.WhiteBoard = ma.WhiteBoard(
             width=width, height=sum(heights.values()), margin=0.1
@@ -3468,7 +3478,8 @@ class Decomposition:
                           heights['ribbon'])
             ribbon: mp.Colors = mp.Colors(
                 group,
-                legend_kws=dict(ncols=legend_cols_grp),
+                legend_kws=dict(ncols=legend_cols_grp,
+                                title="" if group.name is None else group.name),
                 **self.__group_colours(group_colors, group)
             )
             wb.add_top(ribbon, size=heights['ribbon'], pad=0.1)
@@ -4428,7 +4439,7 @@ class Decomposition:
                                            sep=delim)
             # Collapse to series if only a single column
             res_obj = df if df.shape[1] > 1 else df.iloc[:, 0]
-        if xtn == "yaml":
+        elif xtn == "yaml":
             res_obj = yaml.safe_load(stream)
         else:
             logger.debug("Ignored file %s due to extension", name)
@@ -4445,8 +4456,12 @@ class Decomposition:
         # extension
         f: tarfile.TarFile
         with tarfile.open(gzip, 'r:gz') as f:
-            return {n: Decomposition.__load_stream(n, f.extractfile(n), delim)
-                    for n in f.getnames() if n in Decomposition.LOAD_FILES}
+            return {
+                pathlib.Path(n).name: Decomposition.__load_stream(
+                    n, f.extractfile(n), delim)
+                for n in f.getnames()
+                if pathlib.Path(n).name in Decomposition.LOAD_FILES
+            }
 
     @staticmethod
     def __load_dir(dir: os.PathLike,
@@ -4575,7 +4590,7 @@ class Decomposition:
                 for d in sorted(
                     (d for d in subdir.iterdir() if
                      re.match(r'^\d*$', d.name) is not None and
-                     d.is_dir()),
+                     (d.is_dir() or d.suffix == ".gz")),
                     key=lambda x: int(x.name)
                 )
             ]

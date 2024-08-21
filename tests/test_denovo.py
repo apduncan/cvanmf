@@ -273,6 +273,8 @@ def are_decompositions_close(a: Dict[int, List[Decomposition]],
     """Are multiple decompositions equivalent?"""
 
     # Flatten each and compare elementwise
+    assert sum(len(x) for x in a.values()) == sum(len(x) for x in b.values()), \
+        "Number of decompositions does not match"
     paired = list(zip(
         itertools.chain.from_iterable(a.values()),
         itertools.chain.from_iterable(b.values())
@@ -557,7 +559,7 @@ def test_plot_relative_weight(
             index=list(rnd_cat.unique())
         ),
         model_fit=True,
-        heights=dict(ribbon=0.2, bar=0.8, labels=0.4),
+        heights=dict(ribbon=0.2, bar=0.4, label=0.2, dot=0.2),
         sample_label_size=6.0,
         legend_cols_h=2,
         legend_cols_v=2,
@@ -1178,3 +1180,7 @@ def test_rank_selection_k1(
     coph: pd.Series = cophenetic_correlation(decomps)
     assert 1 not in disp.index
     assert 1 not in coph.index
+
+def test_temp():
+    pth = pathlib.Path("/Users/pez23lof/Library/CloudStorage/OneDrive-NorwichBioscienceInstitutes/cvanmf_manuscript/figures/fig_global_diversity/4.tar.gz")
+    d = Decomposition.load(pth)
