@@ -1043,6 +1043,8 @@ def __detect_max(
     """
     from scipy.signal import argrelmax
     # Default to wrap to get peaks at 2
+    # Remove rank 1 if it is present (if old results which allowed rank 1 in
+    # stability results)
     maxima_idx: np.ndarray = argrelmax(
         data=series.values,
         **(dict(mode="wrap") | kwargs))[0]

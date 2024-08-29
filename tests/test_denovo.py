@@ -1180,7 +1180,3 @@ def test_rank_selection_k1(
     coph: pd.Series = cophenetic_correlation(decomps)
     assert 1 not in disp.index
     assert 1 not in coph.index
-
-def test_temp():
-    pth = pathlib.Path("/Users/pez23lof/Library/CloudStorage/OneDrive-NorwichBioscienceInstitutes/cvanmf_manuscript/figures/fig_global_diversity/4.tar.gz")
-    d = Decomposition.load(pth)
