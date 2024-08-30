@@ -1,9 +1,9 @@
-"""Crossvalidated NMF (cvanmf)
+"""CrossVAlidated NMF (cvanmf)
 
-A package implementing nine fold bi-crossvalidation for non-negative matrix
+A package implementing Gabriel holdout bicrossvalidation for non-negative matrix
 factorisation (NMF) parameter selection, as well as methods for analysis and
 visualisation of NMF decompositions, and for transforming new data using an
-existing model.
+existing models.
 
 The underlying implementation of NMF is from scikit-learn, this package does
 not provide a novel implementation of NMF.

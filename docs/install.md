@@ -33,6 +33,14 @@ Try 'rank_select --help' for help.
 Error: Missing option '-i' / '--input'.
 ```
 
+### Issues with `gcc`
+Some packages which `cvanmf` depends upon require `gcc` to install, which is not available on some systems by default.
+If using `conda`/`mamba` you can install it in the local environment
+```
+mamba install --name cvanmf gcc
+```
+or use the system package manager for to install (e.g. `sudo apt install gcc` for debian based distros).
+
 ## Updating
 
 To update to a new version of `cvanmf`, with your environment active, run

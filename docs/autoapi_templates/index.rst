@@ -5,7 +5,8 @@ This page contains auto-generated API reference documentation [#f1]_.
 
 For generating new models, see :mod:`cvanmf.denovo`. To reapply a model, use
 :mod:`cvanmf.reapply`. Some existing models (currently just the five
-Enterosignature model) as provided by :mod:`cvanmf.models`.
+Enterosignature model) as provided by :mod:`cvanmf.models`. Example datasets, both synthetic
+and read data, are provided in :mod:`data`.
 
 .. toctree::
     :titlesonly:
@@ -13,6 +14,7 @@ Enterosignature model) as provided by :mod:`cvanmf.models`.
     cvanmf/denovo/index
     cvanmf/reapply/index
     cvanmf/models/index
+    cvanmf/data/index
 
 Experimental Modules
 --------------------

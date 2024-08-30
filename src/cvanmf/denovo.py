@@ -3365,34 +3365,33 @@ class Decomposition:
     ):
         """Plot relative weight of each signature in each sample.
 
+        To display the plot in a notebook environment, use `result.render()`.
         Please note this plot uses the marsilea package rather than
-        plotnine like other plots. Unfortunately, the options for
-        combining multiple elements are not yet well developed in
-        pltonine.
+        plotnine like other plots. Unfortunately, the options for combining
+        multiple elements are not yet well developed in plotnine.
 
         Plots a stacked bar chart with a bar for each sample displaying the
         relative weight of each signature. Optionally the plot can also
-        include a section at the top summarising the model fit for each
-        sample, and a ribbon along the bottom display categorical metadata
-        for samples.
-
-        This uses patchworklib for putting together multiple plotnine plots,
-        so when adding either top or bottom element will return a Bricks item.
-        Patchworklib can be slow for large plots.
+        include sections at the top summarising the model fit for each
+        sample, and a ribbon along displaying categorical metadata for samples.
 
         :param group: Categorical metadata for each sample to plot on ribbon
         at the bottom
         :param group_colors: Colour to associate with each of the metadata
         categories.
-        :param model_fit: Include a top row indicating model fit per sample
+        :param model_fit: Include a top row indicating model fit per sample.
         :param heights: Height in inches for each component of the plot. Only
         used when including model fit or ribbon. Specify as a dictionary
-        with keys 'dot', 'bar', or 'ribbon', or a list with heights for
+        with keys 'dot', 'ribbon', 'bar', 'labels', or a list with heights for
         the elements included from top to bottom.
-        :param width: Width used when combining multiple elements
+        :param width: Width of plot.
         :param sample_label_size: Size for sample labels. Set to 0 to remove
         sample labels.
-        :return: A plotnine ggplot or patchwork Bricks object
+        :legend_cols_sig: Number of columns in Signature legend.
+        :legend_cols_grp: Number of columns in group legend.
+        :legend_side: Location of Signature and group legend. One of 'top',
+        'right', 'left', 'bottom'
+        :return: Marsilea whiteboard object. Call .render() to show plot.
         """
         # Parse height arguments
         if heights is not None:
