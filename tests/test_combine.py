@@ -9,9 +9,10 @@ import pytest
 
 import cvanmf.models
 from cvanmf import models
-from cvanmf.combine import align_signatures, compare_signatures, \
-    match_signatures, combine_signatures, Cohort, Model, \
+from cvanmf.combine import combine_signatures, Cohort, Model, \
     Signature, Combiner, Cluster, split_dataframe_to_cohorts
+from cvanmf.stability import compare_signatures, align_signatures, \
+    match_signatures
 from cvanmf.denovo import NMFParameters, decompositions, Decomposition
 from cvanmf.models import Signatures
 

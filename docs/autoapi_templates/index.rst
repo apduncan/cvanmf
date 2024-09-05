@@ -13,6 +13,7 @@ and read data, are provided in :mod:`data`.
 
     cvanmf/denovo/index
     cvanmf/reapply/index
+    cvanmf/stability/index
     cvanmf/models/index
     cvanmf/data/index
 

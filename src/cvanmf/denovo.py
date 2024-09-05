@@ -964,7 +964,8 @@ def suggest_rank(
 def suggest_rank_stability(
         rank_selection_results: Union[pd.DataFrame, Iterable[pd.Series],
                                 Dict[int, List[Decomposition]]],
-        measures: List[str] = ['cophenetic_correlation', 'dispersion'],
+        measures: List[str] = ['cophenetic_correlation', 'dispersion',
+                               'signature_similarity'],
         near_max: float = 0.02,
         **kwargs
 ) -> Dict[str, int]:
@@ -993,7 +994,8 @@ def suggest_rank_stability(
         df = rank_selection_results
     elif isinstance(rank_selection_results, dict):
         df = pd.concat([dispersion(rank_selection_results),
-                        cophenetic_correlation(rank_selection_results)],
+                        cophenetic_correlation(rank_selection_results),
+                        signature_similarity(rank_selection_results)],
                        axis=1
                        ).reset_index(names=['rank'])
     else:
@@ -1737,6 +1739,30 @@ def _stability_remove_rank_one(
         i: l for i, l in decompositions.items() if i != 1
     }
 
+def signature_similarity(
+        decompositions: Dict[int, List[Decomposition]]
+) -> pd.Series:
+    """Mean cosine similarity of signatures for rank selection
+
+    This rank selection criteria is based on the intuition that if a solution
+    is good, it should be across multiple random initialisation of the data,
+    similar to the approach underling :func:`copehenetic_correlation` and
+    :func:`dispersion`.
+
+    We pair signatures based on a cosine similarity (see
+    :func:`stability.match_signatures`) and take the mean value between paired
+    signatures at a rank, and look for clear peaks.
+
+    The paired cosine similarity can also be visualised in more detail using
+    :func:`stability.plot_signature_stability`.
+    """
+
+    from cvanmf.stability import signature_stability
+    s: pd.Series = signature_stability(
+        decompositions
+    ).groupby(['k'])['pair_cosine'].mean()
+    s.name = 'signature_similarity'
+    return s
 
 def cophenetic_correlation(
         decompositions: Dict[int, List[Decomposition]],
@@ -1782,7 +1808,7 @@ def dispersion(
 ) -> pd.Series:
     """Dispersion coefficient for rank selection
 
-    The dispersion coefficient (ccc) is a method for rank selection which
+    The dispersion coefficient is a method for rank selection which
     looks for consistency in the average consensus matrix (Park 2007).
     This shares the same underlying data structure as
     :func:`cophenetic_correlation`, the average consensus matrix, looking at
@@ -1821,7 +1847,8 @@ def dispersion(
 def plot_stability_rank_selection(
         decompositions: Optional[Dict[int, List[Decomposition]]] = None,
         series: Optional[List[pd.Series]] = None,
-        include: List[str] = ['cophenetic_correlation', 'dispersion'],
+        include: List[str] = ['cophenetic_correlation', 'dispersion',
+                              'signature_similarity'],
         suggested_rank: bool = True,
         on: Literal['h', 'w'] = 'h'
 ) -> plotnine.ggplot:
@@ -1848,6 +1875,8 @@ def plot_stability_rank_selection(
             series.append(cophenetic_correlation(decompositions, on=on))
         if "dispersion" in include:
             series.append(dispersion(decompositions, on=on))
+        if "signature_similarity" in include:
+            series.append(signature_similarity(decompositions))
     series = [x for x in series if x.name in include]
     if len(series) == 0:
         raise ValueError(f"No valid measures in {include}")
@@ -3162,7 +3191,7 @@ class Decomposition:
         :returns: Matrix with cosine of angles between signature vectors.
         """
 
-        from cvanmf.combine import compare_signatures
+        from cvanmf.stability import compare_signatures
         return compare_signatures(self, b)
 
     def match_signatures(self, b: 'Comparable') -> pd.DataFrame:
@@ -3189,7 +3218,7 @@ class Decomposition:
         :returns: DataFrame with pairing and scores
         """
 
-        from cvanmf.combine import match_signatures
+        from cvanmf.stability import match_signatures
         return match_signatures(self, b)
 
     def name_signatures_by_weight(
@@ -4590,9 +4619,9 @@ class Decomposition:
                 Decomposition.load(d, x=x_mat, delim=delim)
                 for d in sorted(
                     (d for d in subdir.iterdir() if
-                     re.match(r'^\d*$', d.name) is not None and
+                     re.match(r'^\d*(?:\.tar\.gz)?$', d.name) is not None and
                      (d.is_dir() or d.suffix == ".gz")),
-                    key=lambda x: int(x.name)
+                    key=lambda x: int(x.name.split('.')[0])
                 )
             ]
         return decomps
