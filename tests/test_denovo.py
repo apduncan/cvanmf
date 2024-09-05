@@ -18,7 +18,7 @@ from cvanmf.denovo import BicvSplit, BicvFold, bicv, _cosine_similarity, \
     decompositions, Decomposition, cli_rank_selection, regu_selection, \
     plot_regu_selection, cli_regu_selection, suggest_rank, _cbar, \
     _cophenetic_correlation, cophenetic_correlation, _dispersion, dispersion, \
-    plot_stability_rank_selection, suggest_rank_stability
+    plot_stability_rank_selection, suggest_rank_stability, signature_similarity
 from cvanmf.reapply import match_identical
 
 
@@ -1119,7 +1119,8 @@ def test_stability_rank_selection(small_decompositions_random):
     res: pd.DataFrame = pd.concat(
         [
             dispersion(small_decompositions_random),
-            cophenetic_correlation(small_decompositions_random)
+            cophenetic_correlation(small_decompositions_random),
+            signature_similarity(small_decompositions_random)
         ],
         axis=1
     ).reset_index(names="rank")
@@ -1171,7 +1172,10 @@ def test_rank_selection_k1(
         progress_bar=False
     )
     stab_rank: Dict[str, int] = suggest_rank_stability(decomps)
-    assert {'cophenetic_correlation', 'dispersion'} == set(stab_rank.keys())
+    assert (
+        {'cophenetic_correlation', 'dispersion', 'signature_similarity'}
+        == set(stab_rank.keys())
+    )
     assert all(isinstance(x, int) for x in stab_rank.values())
 
     # Ensure cophenetic correlation and dispersion remove rank 1 from
