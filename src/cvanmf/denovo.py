@@ -1002,6 +1002,7 @@ def suggest_rank_stability(
         df = pd.concat(list(rank_selection_results), axis=1).reset_index(
             names=['rank'])
 
+    measures = list(set(measures).intersection(set(df.columns)))
     return (
         df[['rank'] + measures]
         .set_index('rank')
