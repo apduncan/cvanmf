@@ -937,7 +937,7 @@ def suggest_rank(
 
     This is implemented using the excellent `kneed` package, and `**kwargs`
     are passed to the constructor of `KneeLocator`, you can use this if you
-    wish to customise the behaviour.
+    wish to customise the behaviour. We use the online mode of kneed by default.
 
     :param rank_selection_results: Results from :func:`rank_selection`, or
         these results in DataFrame format from
@@ -1018,9 +1018,11 @@ def __detect_elbow(
         **kwargs
 ) -> float:
     """Return estimated elbow point in a series of values using the package
-    kneed."""
+    kneed. Uses the online mode by default. Pass online=False to disable."""
     direction: str = 'increasing' if increasing else 'decreasing'
     curve: str ='concave' if concave else 'convex'
+    if 'online' not in kwargs:
+        kwargs['online'] = True
     locator: KneeLocator = KneeLocator(
         x=series.index,
         y=series.values,
