@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## v0.3.1 (2024-09-10)
+
+### Fix
+
+* fix(denovo): sort values by rank in stability rank select
+
+If stability critera (coph, disp, sigsim) were not in rank order in input automated suggestions of rank would be incorrect. Internally sorts by rank now so can be provided in any order. ([`391a2fa`](https://github.com/apduncan/cvanmf/commit/391a2fa8adf19894c2012bb4281c97be126f14b1))
+
+* fix(denovo): use online kneed
+
+Ocassionally too low a rank was being selected from bicrossvalidation curves, where a clear elbow point was visible later. Changed kneed to use online mode by default, which scan the entire curve rather than terminating at the first elbow. ([`beaefae`](https://github.com/apduncan/cvanmf/commit/beaefae1090765dc02ba198a0dce24a6a8f32808))
+
 ## v0.3.0 (2024-09-05)
 
 ### Documentation
