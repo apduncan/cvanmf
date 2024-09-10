@@ -1055,7 +1055,6 @@ def test_suggest_rank(
         small_rank_selection
 ):
     res: Dict[str, float] = suggest_rank(small_rank_selection)
-    foo = 'ar'
 
 
 def test_consensus_matrix(
@@ -1137,9 +1136,17 @@ def test_stability_rank_selection(small_decompositions_random):
         index=range(2, 12),
         columns=['cophenetic_correlation']
     ).reset_index(names=['rank'])
-    res2: pd.DataFrame = suggest_rank_stability(
+    res2: Dict[str, int] = suggest_rank_stability(
         df, measures=['cophenetic_correlation'])
     assert res2['cophenetic_correlation'] == 7, "Incorrect rank selected"
+
+    # Shuffle index and ensure correct rank returned
+    df = df.sample(frac=1)
+    res3: Dict[str, int] = suggest_rank_stability(
+        df, measures=['cophenetic_correlation']
+    )
+    assert res3['cophenetic_correlation'] == 7, \
+        "Incorrect rank on shuffled index"
 
 
 def test_plot_stability_rank_selection(
