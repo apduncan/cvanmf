@@ -994,14 +994,26 @@ def test_univariate_tests(small_decomposition):
         np.random.choice(["A", "B"], size=small_decomposition.h.shape[1]),
         index=small_decomposition.h.columns
     ).to_frame(name="rand_cat")
+    # This is assigning each sample to the category for which is has max value
     rnd_cat['rand_cat_too'] = (
         small_decomposition
         .scaled("h")
         .idxmax().astype("str")
     )
     rnd_cat['rand_cat_na'] = rnd_cat['rand_cat_too'].replace("S3", np.nan)
-    small_decomposition.univariate_tests(metadata=rnd_cat)
-
+    test_res: pd.DataFrame = small_decomposition.univariate_tests(
+        metadata=rnd_cat)
+    # Test that rand_cat_too is indicating the correct directions
+    # and is significant
+    test_too: pd.DataFrame = test_res[test_res['md'] == 'rand_cat_too'].drop(
+        index=['modelfit']
+    )
+    assert (test_too['global_adj_p'] < 0.01).all(), \
+        "Tests 'rand_cat_too' should be significant."
+    assert (test_too['signature'] == test_too['max_mean']).all(), \
+        "Incorrect direction indicated by mean."
+    assert (test_too['signature'] == test_too['max_median']).all(), \
+        "Incorrect direction indicated by median."
 
 def test_plot_metadata(
         small_decomposition,
