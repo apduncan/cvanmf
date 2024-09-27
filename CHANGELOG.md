@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## v0.3.2 (2024-09-27)
+
+### Fix
+
+* fix(denovo): indicate effect direction (#12)
+
+Added columns univariate_test output indicating which factor level has the maximum mean and median. For two group tests can use this as an indication of effect direction. ([`e858fb5`](https://github.com/apduncan/cvanmf/commit/e858fb5f3d88bec51890524a08c73c7198dda1c4))
+
 ## v0.3.1 (2024-09-10)
 
 ### Fix
