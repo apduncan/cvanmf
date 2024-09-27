@@ -23,6 +23,7 @@ and visualisation and analysis are carried out using object methods (such as
 from __future__ import annotations
 
 import collections
+import functools
 import hashlib
 import inspect
 import itertools
@@ -214,7 +215,8 @@ class BicvSplit:
         return self.__mx
 
     @property
-    def design(self):
+    def design(self) -> Tuple[int, int]:
+        """Design of holdout pattern, given as (rows, columns)."""
         return self.__design
 
     @property
@@ -230,6 +232,7 @@ class BicvSplit:
 
     @property
     def i(self) -> int:
+        """This is the i-th shuffle of the input."""
         return self.__i
 
     @i.setter
@@ -250,6 +253,7 @@ class BicvSplit:
 
     @property
     def num_folds(self) -> int:
+        """Total number of folds in this design."""
         return self.design[0] * self.design[1]
 
     def __block_orderings(self) -> Tuple[List[List[int]], List[List[int]]]:
@@ -278,12 +282,9 @@ class BicvSplit:
         readability.
         
         :param row: Row index to get
-        :type row: int
         :param join: Join into a single matrix
-        :type join: bool
         :returns: List of submatrices making up the row, or these submatrices
             joined if requested.
-        :rtype: Union[List[pd.DataFrame], pd.DataFrame]
         """
         subs: List[pd.DataFrame] = self.mx[row]
         if join:
@@ -298,12 +299,9 @@ class BicvSplit:
         readability.
 
         :param col: Column index to get
-        :type col: int
         :param join: Join into a single matrix
-        :type join: bool
         :returns: List of submatrices making up the column, or these submatrices
             joined if requested.
-        :rtype: Union[List[pd.DataFrame], pd.DataFrame]
         """
         subs: List[pd.DataFrame] = [x[col] for x in self.mx]
         if join:
@@ -505,9 +503,9 @@ class BicvSplit:
         :param df: Matrix to shuffle and split
         :param n: Number of shuffles
         :param design: Number of blocks to divide rows and columns into.
-        Default is 3x3 9-fold bicrossvalidation.
+            Default is 3x3 9-fold bicrossvalidation.
         :param random_state: Random state, either int seed or numpy Generator;
-        None for default numpy random Generator.
+            None for default numpy random Generator.
         :returns: A generator of  splits, as BicvSplit objects
         """
         rnd: np.random.Generator = np.random.default_rng(random_state)
@@ -570,12 +568,9 @@ class BicvSplit:
         """Perform a single shuffle of a matrix.
 
         :param df: Matrix to shuffle
-        :type df: pd.DataFrame
         :param random_state: Randomisation state. Either a numpy Generator,
             an integer seed for a Generator, or None for the default generator.
-        :type random_state: int
         :returns: Shuffled matrix
-        :rtype: pd.DataFrame
         """
         # Get a random state - if this is already a generator it is returned
         # unaltered, if int uses this as a seed, if None gets Generator with
@@ -671,8 +666,9 @@ class NMFParameters(NamedTuple):
 
 class BicvResult(NamedTuple):
     """Results from a single bi-cross validation run. For each BicvSplit there
-    are mn folds (for m splits on rows, n splits on columns), for which the top
-    left submatrix (A) is estimated (A') using the other portions."""
+    are :math:`mn` folds (for :math:`m` splits on rows, :math:`n` splits on
+    columns), for which the top left submatrix (:math:`A`) is estimated
+    (:math:`A'`) using the other portions."""
     parameters: NMFParameters
     """Parameters used during this run."""
     a: Optional[List[np.ndarray]]
@@ -752,7 +748,7 @@ class BicvResult(NamedTuple):
                   ) -> pd.Series:
         """Convert bi-fold cross validation results to series
 
-        :param summarise: Function to reduce each the measure (r_squared etc)
+        :param summarise: Function to reduce each the measures (r_squared etc)
             to a single value for each shuffle.
         :returns: Series with entry for each non-parameter measure
         """
@@ -791,7 +787,7 @@ class BicvResult(NamedTuple):
         :param results: List of results for bicv runs with the same
             parameters on different shuffles of the data, or dict of runs
             across multiple values on the same shuffles.
-        :param summarise: Function to reduce each the measure (r_squared etc)
+        :param summarise: Function to reduce each the measures (r_squared etc)
             to a single value for each shuffle.
         """
         result: Iterable[BicvResult] = (
@@ -817,17 +813,18 @@ def rank_selection(x: pd.DataFrame,
                    progress_bar: bool = True) -> Dict[int, List[BicvResult]]:
     """Bi-cross validation for rank selection.
 
-    Run mn-fold bi-cross validation across a range of ranks. Briefly, the
+    Run :math:`mn`-fold bicrossvalidation across a range of ranks. Briefly, the
     input matrix is shuffled `shuffles` times. Each shuffle is then split
-    into mxn submatrices (m splits on rows, n split on columns. The rows and
-    columns of submatrices are permuted, and the top left submatrix (A) is
-    estimated through NMF decompositions of the other matrices producing an
-    estimate A'. Various measures of how well A' reconstructed A are
-    provided, see :class:`BicvResult` for details on the measures.
+    into :math:`m\timesn` submatrices (:math:`m` splits on rows, :math:`n`
+    splits on columns). The rows and columns of submatrices are permuted, and
+    the top left submatrix (:math:`A`) is estimated through NMF decompositions
+    of the other matrices producing an estimate :math:`A'`. Various measures of
+    how well :math:`A'` reconstructed :math:`A` are provided, see
+    :class:`BicvResult` for details on the measures.
 
     No multiprocessing is used, as a majority of build of scikit-learn seem to
     make good use of multiple processors anyway (depending on compilation of
-    underlying libraries).
+    underlying libraries and matrix size).
 
     This method returns a dictionary with each rank as a key, and a list
     containing one :class:`BicvResult` for each shuffle.
@@ -840,7 +837,7 @@ def rank_selection(x: pd.DataFrame,
         If not provided, will initialise with entropy from system.
     :param alpha: Regularisation coefficient
     :param l1_ratio: Ratio between L1 and L2 regularisation. L2 regularisation
-        (1.0) is densifying, L1 (0.0) sparisfying.
+        (0.0) is densifying, L1 (1.0) sparisfying.
     :param max_iter: Maximum iterations of NMF updates. Will end early if
         solution converges.
     :param beta_loss: Beta-loss function, see sklearn documentation for
@@ -927,7 +924,7 @@ def suggest_rank(
 ) -> Dict[str, int]:
     """Suggest a suitable rank.
 
-    Attempt to identify and elbow point in the graphs of cosine similarity
+    Attempt to identify an elbow point in the graphs of cosine similarity
     and :math:`R^2` which represent points where the rate of improvement in
     the decomposition slows.
 
@@ -943,8 +940,8 @@ def suggest_rank(
         these results in DataFrame format from
         :meth:`BicvResult.results_to_table`
     :param summarise: Function to summarise results from a shuffle
-    :param measures: The measures to consider if passed a dataframe
-    :param kwargs: Arguments passed to `KneeLocator` constructor
+    :param measures: The measures to consider if passed a DataFrame
+    :param kwargs: Arguments passed to ``KneeLocator`` constructor
     """
     df: pd.DataFrame = (
         rank_selection_results if isinstance(rank_selection_results,
@@ -971,22 +968,24 @@ def suggest_rank_stability(
 ) -> Dict[str, int]:
     """Suggest a suitable rank.
 
-    Attempt to identify peaks in stability based rank selection criteria (
-    cophenetic correlation, dispersion). By default the highest peak is
-    selected. Where there are many similar ranks (defined by near_max),
-    the one with the most consecutively decreasing values after it.
+    Attempt to identify peaks in stability based rank selection criteria
+    (cophenetic correlation, dispersion, signature similrity). By default the
+    highest peak is selected. Where there are many similar ranks (defined by
+    `near_max`), the one with the most consecutively decreasing values after it.
 
     Please note this is only a suggestion of a suitable rank; the plots
     should still be inspected and decompositions of candidate ranks inspected to
     make a final decision.
 
     :param rank_selection_results: Results from :func:`decomposition`,
-    or series produced by :func:`dispersion` and
-    :func:`cophenetic_correlation`, or a DataFrame of those series joined.
+        or series produced by :func:`dispersion`,
+        :func:`cophenetic_correlation`, and :func:`signature_similarity`, or a
+        DataFrame of those series joined.
     :param measures: The measures to consider if passed a DataFrame
-    :param near_max: Consider peaks (p) candidates if they are within a
-    certain distance of global maximum (gm): p >= gm * (1 - near_max).
-    :param kwargs: Passed to argrelmax.
+    :param near_max: Consider peaks (:math:`p`) candidates if they are within a
+        certain distance of global maximum (:math:`gm`):
+        :math:`p \geq gm(1-near_max)`.
+    :param kwargs: Passed to ``np.argrelmax``.
     """
 
     df: pd.DataFrame
@@ -1097,38 +1096,40 @@ def plot_rank_selection(results: Dict[Union[int, float], List[BicvResult]],
                         geom_params: Dict[str, Any] = None,
                         **kwargs
                         ) -> plotnine.ggplot:
-    """Plot rank selection results from bi-cross validation.
+    """Plot rank selection results from bicrossvalidation.
 
     Draw either box plots or violin plots showing statistics comparing
-    A and A' from all bi-cross validation results across a range of ranks.
-    The plotting library used is `plotnine`; the returned plot object
-    can be saved or drawn using `plt_obj.save` or `plt_obj.draw` respectively.
-    By default, only cosine_similarity and r_squared are plotted. You can
+    :math:`A` and :math:`A'` from all bicrossvalidation results across a
+    range of ranks.
+    The plotting library used is ``plotnine``; the returned plot object
+    can be saved or drawn using ``plt_obj.save`` or ``plt_obj.draw``
+    respectively.
+    By default, only `cosine_similarity` and `r_squared` are plotted. You can
     define which measures to include using include, or which to exclude using
     exclude. You can also use show_all to show all the measures.
 
     :param results: Dictionary of results, with rank as key and a list of
-    :class:`BicvResult` for that rank as value
+        :class:`BicvResult` for that rank as value
     :param exclude: Measures from :class:`BicvResult` not to plot.
     :param include: Measures from :class:`BicvResult` to plot.
     :param show_all: Show all measures, ignoring anything set in include or
-    exclude.
+        exclude.
     :param geom: Type of plot to draw. Accepts either 'box' or 'violin'
     :param summarise: How to summarise the statistics across the folds
-    of a given shuffle.
+        of a given shuffle.
     :param suggested_rank: Estimate rank using :func:`suggest_rank`.
     :param stars_at: Manually define x-axis values at which to place stars
-    above the main plot. Mainly used to allow :method:`plot_regu_selection`
-    to pass where to plot stars for regularisation selection.
+        above the main plot. Mainly used to allow :method:`plot_regu_selection`
+        to pass where to plot stars for regularisation selection.
     :param star_size: Size of star indicating suggested rank.
     :param jitter: Draw individual points for each shuffle above the main plot.
     :param jitter_size: Size of jitter points.
     :param n_col: Number of columns in the plot. If blank, attempts to guess
-    a sensible value.
+        a sensible value.
     :param xaxis: Value to plot along the x-axis. "rank" for rank selection,
-    "alpha" for regularisation selection.
+        "alpha" for regularisation selection.
     :param rotate_x_labels: Degrees to rotate x-axis labels by. If None
-    will rotate if x-axis is float.
+        will rotate if x-axis is float.
     :param **kwargs: Passed to :func:`suggest_ranks`.
     :return: :class:`plotnine.ggplot` instance
     """
@@ -1320,11 +1321,11 @@ def regu_selection(x: pd.DataFrame,
                    design: Tuple[int, int] = (3, 3),
                    progress_bar: bool = True
                    ) -> Tuple[float, Dict[float, List[BicvResult]]]:
-    """Bi-cross validation for regularisation selection.
+    """Bicrossvalidation for regularisation selection.
 
-    Run mn-fold bi-cross validation across a range of regularisation ratios,
-    for a single rank. For a brief description of bi-cross validation see
-    :func:`rank_selecton`
+    Run :math:`mn`-fold bicrossvalidation across a range of regularisation
+    ratios, for a single rank. For a brief description of bi-cross validation
+    see :func:`rank_selecton`
 
     No multiprocessing is used, as a majority of build of scikit-learn
     seem to make good use of multiple processors anyway.
@@ -1332,9 +1333,9 @@ def regu_selection(x: pd.DataFrame,
     This method returns a tuple with
 
     * a float which is the tested alpha which meets the criteria in
-    the ES paper
+        the ES paper
     * a dictionary with each alpha value as a key, and a list containing one
-    :class:`BicvResult` for each shuffle
+        :class:`BicvResult` for each shuffle
 
     :param x: Input matrix.
     :param rank: Rank of decomposition.
@@ -1349,12 +1350,12 @@ def regu_selection(x: pd.DataFrame,
         they will be scaled by sample, when alpha range specified will not be
         scaled.
     :param shuffles: Number of times to shuffle `x`.
-    :param keep_mats: Return A' and shuffle as part of results.
+    :param keep_mats: Return :math:`A'` and `shuffle` as part of results.
     :param seed: Random value generator or seed for creation of the same.
         If not provided, will initialise with entropy from system.
     :param alpha: Regularisation coefficient
     :param l1_ratio: Ratio between L1 and L2 regularisation. L2 regularisation
-        (1.0) is densifying, L1 (0.0) sparisfying.
+        (0.0) is densifying, L1 (1.0) sparisfying.
     :param max_iter: Maximum iterations of NMF updates. Will end early if
         solution converges.
     :param beta_loss: Beta-loss function, see sklearn documentation for
@@ -1451,11 +1452,11 @@ def regu_selection(x: pd.DataFrame,
 def suggest_alpha(regu_results: Dict[float, List[BicvResult]]) -> float:
     """Suggest a suitable value for alpha.
 
-    Want to select the largest value of alpha possible which does not
+    Want to select the largest value of :math:`alpha` possible which does not
     detrimentally effect the quality of the decomposition. To gauge this,
-    we adopt the heuristic of [REF], selecting the highest value of alpha
-    for which the mean R^2 is not lower than the (mean R^2 + standard
-    deviation) at alpha=0.
+    we adopt the heuristic of [REF], selecting the highest value of
+    :math:`alpha` for which the mean :math:`R^2` is not lower than the (mean
+    :math:`R^2` + standard deviation) at :math:`alpha=0`.
 
     This is called by default in :func:`regu_selection`. It is provided as
     public method as the Nextflow pipeline splits the Bicv process, and
@@ -1500,7 +1501,7 @@ def plot_regu_selection(
 
     Takes a result from :function:`regu_selection` and passes to
     :function:`plot_rank_selection` to plot with alpha values along the
-    xaxis. Consequently, pass any parameters for plotting as kwargs.
+    x-axis. Consequently, pass any parameters for plotting as kwargs.
 
     :param regu_res: Results from :function:`regu_selection`.
     :param alpha_star: Suggest and plot a suitable alpha value using
@@ -1541,9 +1542,9 @@ def plot_regu_selection(
 
 
 def bicv(params: Optional[NMFParameters] = None, **kwargs) -> BicvResult:
-    """Perform a single run of bi-cross validation
+    """Perform a single run of bicrossvalidation.
 
-    Perform one run of bi-cross validation. Parameters can either be passed
+    Perform one run of bicrossvalidation. Parameters can either be passed
     as a :class:`BicvParameters` tuple and are documented there, or by keyword
     arguments using the same names as :class`BicvParameters`.
 
@@ -1570,7 +1571,7 @@ def bicv(params: Optional[NMFParameters] = None, **kwargs) -> BicvResult:
 
 
 def __bicv_single(params: NMFParameters, fold: BicvFold) -> BicvResult:
-    """Run bi-cross validation on a single fold. Return a results tuple with
+    """Run bicrossvalidation on a single fold. Return a results tuple with
     single entries in all the result fields, these are later joined. This
     implementation is based on scripts from
     https://gitlab.inria.fr/cfrioux/enterosignature-paper/. Quality
@@ -1663,12 +1664,12 @@ def __bicv_single(params: NMFParameters, fold: BicvFold) -> BicvResult:
 
 
 def _rss(A: np.ndarray, A_prime: np.ndarray) -> float:
-    """Residual sum of squares
+    """Residual sum of squares.
 
-    The square of difference between values in A and A'
+    The square of difference between values in :math:`A` and :math:`A'`.
 
-    :param A: Held-out matrix A
-    :param A_prime: Imputed matrix A
+    :param A: Held-out matrix :math:`A`
+    :param A_prime: Imputed matrix :math:`A`
     :returns: RSS
     """
     return ((A - A_prime) ** 2).sum().sum()
@@ -1677,15 +1678,15 @@ def _rss(A: np.ndarray, A_prime: np.ndarray) -> float:
 def _rsquared(A: np.ndarray, A_prime: np.ndarray) -> float:
     """Explained variance
 
-    Consider the matrix as a flattened 1d array, and calculate the R^2. This
-    calculation varies from original Enterosignatures paper in that we
-    subtract the mean. In the event R^2 would be inf/-inf (when total sum of
-    squares is 0), this instead returns nan to make taking mean/median simpler
-    later on.
+    Consider the matrix as a flattened 1d array, and calculate the :math:`R^2`.
+    This calculation varies from original Enterosignatures paper in that we
+    subtract the mean. In the event :math:`R^2` would be inf/-inf (when total
+    sum of squares is 0), this instead returns nan to make taking mean/median
+    simpler later on.
 
-    :param A: Held-out matrix A
-    :param A_prime: Imputed matrix A
-    :returns: R^2
+    :param A: Held-out matrix :math:`A`
+    :param A_prime: Imputed matrix :math:`A`
+    :returns: :math:`R^2`
     """
     A_mean: float = np.mean(np.ravel(A))
     tss: float = ((A - A_mean) ** 2).sum().sum()
@@ -1698,8 +1699,8 @@ def _cosine_similarity(A: np.ndarray, A_prime: np.ndarray) -> float:
 
     Cosine angle between two matrices which are flattened to a 1d vector.
 
-    :param A: Held-out matrix A
-    :param A_prime: Imputed matrix A
+    :param A: Held-out matrix :math:`A`
+    :param A_prime: Imputed matrix :math:`A`
     :returns: Cosine similarity
     """
     x_flat: np.array = np.ravel(A)
@@ -1712,8 +1713,8 @@ def _cosine_similarity(A: np.ndarray, A_prime: np.ndarray) -> float:
 def _l2norm_calc(A: np.ndarray, A_prime: np.ndarray) -> float:
     """Calculates the L2 norm metric between two matrices
 
-    :param A: Held-out matrix A
-    :param A_prime: Imputed matrix A
+    :param A: Held-out matrix :math:`A`
+    :param A_prime: Imputed matrix :math:`A`
     :returns: L2 norm
     """
     return np.sqrt(np.sum((np.array(A) - np.array(A_prime)) ** 2))
@@ -3855,10 +3856,19 @@ class Decomposition:
         """
         # Split signature values to separate arrays
         sig_arrs: List[np.ndarray] = [
-            signature.loc[metadata[metadata == x].index] for x in
+            signature.loc[metadata[metadata == x].index].rename(x) for x in
             metadata.unique()
         ]
         fields: List
+        # Determine which category has the highest mean and median
+        max_mean: str = functools.reduce(
+            lambda x, y: x if x.mean() > y.mean() else y,
+            sig_arrs
+        ).name
+        max_median: str = functools.reduce(
+            lambda x, y: x if x.median() > y.median() else y,
+            sig_arrs
+        ).name
         if test == "mw":
             # Mann-Whitney U test
             if len(sig_arrs) != 2:
@@ -3867,15 +3877,17 @@ class Decomposition:
             from scipy.stats import mannwhitneyu
             res = mannwhitneyu(*sig_arrs, **kwargs)
             fields = [res.statistic, res.pvalue, 'mannwhitneyu', signature.name,
-                      metadata.name]
+                      metadata.name, max_median, max_mean]
         else:
             # Default to KW test
             from scipy.stats import kruskal
             res = kruskal(*sig_arrs, **kwargs)
             fields = [res[0], res[1], 'kruskal', signature.name,
-                      metadata.name]
+                      metadata.name, max_median, max_mean]
+
         return pd.Series(data=fields,
-                         index=['statistic', 'p', 'test', 'signature', 'md'])
+                         index=['statistic', 'p', 'test', 'signature', 'md',
+                                'max_median', 'max_mean'])
 
     def __univariate_single_category(
             self,
