@@ -19,6 +19,7 @@ scikit-bio = "^0.6.0"
 kneed = "^0.8.5"
 marsilea = "^0.4.3"
 multimethod = "^1.12"
+scikit-posthocs = "^0.9.0"
 
 [tool.poetry.dev-dependencies]
 

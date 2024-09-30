@@ -1014,6 +1014,9 @@ def test_univariate_tests(small_decomposition):
         "Incorrect direction indicated by mean."
     assert (test_too['signature'] == test_too['max_median']).all(), \
         "Incorrect direction indicated by median."
+    assert (test_too[['signature', 'posthoc_str']].apply(
+        lambda x: x.iloc[1].count(x.iloc[0]), axis=1
+    ) == 2).all(), "Some post-hoc tests not significant when should be."
 
 def test_plot_metadata(
         small_decomposition,
