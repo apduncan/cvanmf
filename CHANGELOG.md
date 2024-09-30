@@ -1,5 +1,13 @@
 # CHANGELOG
 
+## v0.4.0 (2024-09-30)
+
+### Feature
+
+* feat(denovo): add post-hoc K-W tests (#13)
+
+Added post-hoc testing using Dunn&#39;s test to the `univariate_tests` method. This information is not yet displayed in the default plots. ([`47d2eb5`](https://github.com/apduncan/cvanmf/commit/47d2eb5edebeb7c31aa686c3bcd7af95eefcdd4d))
+
 ## v0.3.2 (2024-09-27)
 
 ### Fix
