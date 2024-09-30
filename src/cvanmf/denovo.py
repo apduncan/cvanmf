@@ -47,6 +47,7 @@ import pandas as pd
 import plotnine
 import yaml
 from kneed import KneeLocator
+import scikit_posthocs as sp
 from scipy import sparse
 from scipy.cluster.hierarchy import linkage, cophenet
 from scipy.spatial.distance import pdist, squareform
@@ -1765,7 +1766,7 @@ def signature_similarity(
 
     from cvanmf.stability import signature_stability
     s: pd.Series = signature_stability(
-        decompositions
+        _stability_remove_rank_one(decompositions)
     ).groupby(['k'])['pair_cosine'].mean()
     s.name = 'signature_similarity'
     return s
@@ -3844,13 +3845,22 @@ class Decomposition:
             signature: pd.Series,
             metadata: pd.Series,
             test: str,
+            adj_method: str,
+            alpha: float,
             **kwargs
     ) -> pd.Series:
         """Perform univariate tests on signature weights against metadata.
 
+        Either Mann-Whitney or Kruskal-Wallis tests are performed. For K-W,
+        post-hoc testing is performed with Dunn's test, using adjustment
+        method specified.
+
         :param signature: Signature weights
         :param metadata: Metadata values (discrete)
         :param test: 'mw' for mann-whitney, anything else for kruskal-wallis
+        :param adj_method: Multiple test adjustment method, any supported by
+            statsmodels
+        :param alpha: Threshold for significance
         :param kwargs: passed to test functions
         :return: Series with statistic, p, test, signature, md
         """
@@ -3877,17 +3887,41 @@ class Decomposition:
             from scipy.stats import mannwhitneyu
             res = mannwhitneyu(*sig_arrs, **kwargs)
             fields = [res.statistic, res.pvalue, 'mannwhitneyu', signature.name,
-                      metadata.name, max_median, max_mean]
+                      metadata.name, max_median, max_mean, None, None]
         else:
             # Default to KW test
             from scipy.stats import kruskal
             res = kruskal(*sig_arrs, **kwargs)
+
+            # Post-hoc Dunn's test
+            ph: pd.DataFrame = sp.posthoc_dunn(
+                pd.concat([signature, metadata], axis=1),
+                val_col=signature.name,
+                group_col=metadata.name,
+                p_adjust=adj_method,
+            )
+            # Set lower triangle to nan so no redundant pairs
+            nand: np.ndarray = ph.values.copy()
+            nand[np.tril_indices(nand.shape[0])] = np.nan
+            ph_stack: pd.DataFrame = pd.DataFrame(
+                nand,
+                columns=ph.columns,
+                index=ph.index
+            ).stack().dropna()
+            ph_sig: pd.DataFrame = ph_stack.loc[ph_stack <= alpha]
+            # Format significant pairs into a string
+            sig_pairs: str = ";".join(ph_sig.reset_index().apply(
+                lambda x: f'{x.iloc[0]}|{x.iloc[1]}({x.iloc[2]})', axis=1
+            ))
+
             fields = [res[0], res[1], 'kruskal', signature.name,
-                      metadata.name, max_median, max_mean]
+                      metadata.name, max_median, max_mean,
+                      sig_pairs, ph.values]
 
         return pd.Series(data=fields,
                          index=['statistic', 'p', 'test', 'signature', 'md',
-                                'max_median', 'max_mean'])
+                                'max_median', 'max_mean', 'posthoc_str',
+                                'posthoc_mat'])
 
     def __univariate_single_category(
             self,
@@ -3914,7 +3948,9 @@ class Decomposition:
         categories: int = len(md_clean.unique())
         test: str = "kw" if categories > 2 else "mw"
         res = against.apply(self.__univariate_single_signature,
-                                     metadata=md_clean, test=test, axis=0).T
+                            metadata=md_clean, test=test, axis=0,
+                            adj_method=adj_method, alpha=alpha
+                            ).T
         from statsmodels.stats.multitest import multipletests
         reject, adj_p, _, _ = multipletests(
             res['p'],
@@ -3943,6 +3979,12 @@ class Decomposition:
         non-parametric univariate tests. Currently uses the Mann-Whitney
         U-test on two sample cases, and Kruskall-Wallis tests on multiple
         category tests.
+
+        For K-W tests, post-hoc tests are performed using Dunn's
+        test, with the same adjustment and alpha values. Significant
+        post-hoc tests are returned as a string in the results table, with the
+        format A|B(0.001) for a significant result for pair A and B with
+        adjusted p value of 0.001.
 
         :param metadata: Dataframe of metadata variables to test against. Can
         only handle discrete values.
