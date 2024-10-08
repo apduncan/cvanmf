@@ -30,7 +30,7 @@ RE_SHORTEN: re.Pattern = re.compile(r".*;([^\;?]+[;\?]*)$")
 
 
 class CVANMFException(Exception):
-    """CVA NMF specific exception."""
+    """cvanmf specific exception."""
 
 
 class FeatureMapping:
@@ -403,10 +403,9 @@ def match_genera(
     This function is currently based on the R script provided by Clemence in
     the Enterosignatures (ES) gitlab repo (prepare_matrices.R)
     https://gitlab.inria.fr/cfrioux/enterosignature-paper/. 
-    This will attempt to match names, but if any input names cannot be matched 
-    to Enterosignature names, the third entry returned will be a list of names 
-    to be manually corrected. Mappings in the mapping parameter are new to ES 
-    names, and will be applied before any other matches identified.
+    This will attempt to match names. Mappings in the ``hard_mapping`` parameter
+    are new names to ES names, and will be applied before any other matches
+    identified.
     
     :param w: Enterosignatures W matrix
     :type w: pd.DataFrame
@@ -708,7 +707,7 @@ def reapply(y: Union[str, pd.DataFrame],
     """Load and transform abundances to an existing model.
 
     The new data must be annotated against the same taxonomy the model uses.
-    Currently this is GTDB r207 for the 5 Enterosignature model. Taxon names
+    Currently for the 5 ES models this is GTDB r207. Feature names
     will be automatically matched between the abundance table and model where
     possible, (see :func:`match_genera`). Most of the work is done in
     :func:`transform_table`, this mostly provides convenience of allowing
@@ -716,7 +715,7 @@ def reapply(y: Union[str, pd.DataFrame],
     object.
 
     :param y: Feature matrix to transform. Can be a string giving 
-     path, or a DataFrame.
+        path, or a DataFrame.
     :param model: Model to use. Can be a Signature object, or the name
         of one of the provded Signature objects. Currently this is '5es' for the
         5ES model of Frioux et al.
@@ -729,7 +728,7 @@ def reapply(y: Union[str, pd.DataFrame],
     :param separator: Separator to use when reading and writing matrices.
     :param output_dir: Directory to write results to. Directory will be created
         if it does not exist. Pass None for no output to disk.
-    :param **kwargs: Passed to the Signature validate_input and match feature
+    :param **kwargs: Passed to the Signature validate_input and match_feature
         functions.
     """
 
@@ -821,6 +820,7 @@ def cli(input: str,
     model.
     
     For more on Enterosignatures see:
+
     *  Frioux et al. 2023 (doi:10.1016/j.chom.2023.05.024)
     *  https://enterosignatures.quadram.ac.uk
     """

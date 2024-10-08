@@ -39,7 +39,12 @@ nbsphinx_timeout = 360
 nb_execution_excludepatterns = ["cell_example*"]
 
 def skip_utils(app, what, name, obj, skip, options):
-    if "RE_" in name or "CVANMFException" in name or 'DEF_' in name:
+    if (
+            "RE_" in name or
+            "CVANMFException" in name or
+            'DEF_' in name or
+            "cli" in name[:4]
+    ):
        skip = True
     return skip
 

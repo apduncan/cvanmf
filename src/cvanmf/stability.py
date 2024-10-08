@@ -1,5 +1,22 @@
 """Describe how stable signatures are across initialisations and ranks.
+
+It can be useful to look at how similar signatures are across multiple random
+intialisations. When a signatures is not frequently repeated across iterations,
+we can consider this as potentially as poor selection of rank, or place less
+confidence in those signatures. This can also serve as a method of rank
+selection, by looking for ranks where signatures show high similarity across
+ranks.
+
+Functions in this module are primarily concerned with looking at stability
+of each signature, rather than rank selection.
+
+The main functions are :func:`signature_stability` and
+:func:`plot_signature_stability`.
+
+For rank selection using stability, see instead
+:func:`cvanmf.denovo.signature_similarity`.
 """
+
 from __future__ import annotations
 
 import collections.abc
@@ -112,9 +129,6 @@ def match_signatures(a: Comparable, b: Comparable) -> pd.DataFrame:
     this would be low, and the paired similarity high: signatures match
     well their paired one, while being dissimilar to all others.
 
-    This is a convenince method which calls
-    :func:`combine.match_signatures`.
-
     :param a: Signature matrix, or object with signature matrix
     :param b: Signature matrix, or object with signature matrix
     :returns: DataFrame with pairing and scores"""
@@ -189,19 +203,20 @@ def signature_stability(
 ) -> pd.DataFrame:
     """Characterise how similar signatures are across random initialisations.
 
-    Compare the signatures in :param:`to` to those in :param:`decomps`. If
-    :param:`to` is None, the first value in :param:`decomps` will be used.
+    Compare the signatures in ``to`` to those in ``decomps``. If
+    ``to`` is None, the first value in ``decomps`` will be used.
 
-    Each model in :param:`decomps` is compared to reference :param:`to` using
-    :func:`match_signatures`.
+    Each model in ``decomps`` is compared to reference ``to`` using
+    ``match_signatures``.
 
     Note that if you compare signatures for multiple ranks, the orders
     of signatures are not related across ranks, i.e. S1 in k=2 and S1 in k=3
     are not related.
 
-    :param decomps: Decompositions to compare to
+    :param decomps: Decompositions to compare to. If this is a list,
+        all decompositions must have the same rank.
     :param to: Reference decompositions to compare each of decomps to. If
-        this None then the first item in decomps will be used.
+        this None then the first item in the list will be used.
     """
 
     if to is None:
@@ -226,8 +241,9 @@ def signature_stability(
     """Characterise how similar signatures are across random initialisations.
 
     This versions accepts a dictionary of results, with keys being rank, and
-    values list of decompositions. For each rank, the first (best) decomposition
-    is compared to the others.
+    values list of decompositions (the output format of
+    :func:`cvanmf.denovo.decompositions`). For each rank, the first (best)
+    decomposition is compared to the others.
     """
 
     if to is not None:
@@ -259,10 +275,10 @@ def plot_signature_stability(
     :param colors: Colours to be applied to signatures. If list is shorter
         than the number of signatures, excess will be grey.
     :param ncol: Number of columns in the plot.
-    :param geom_boxplot: Arguments to pass to plotnines geom_boxplot class.
-    :param geom_line: Arguments to pass to plotnines geom_line class. If set
+    :param geom_boxplot: Arguments to pass to plotnine's geom_boxplot class.
+    :param geom_line: Arguments to pass to plotnine's geom_line class. If set
         to True, will draw lines connecting signatures from each model with
-        default styling; passing dictionary to alter styling of lines.
+        default styling; pass dictionary to alter styling of lines.
     """
 
     fill_scale: plotnine.scale_fill_discrete = (

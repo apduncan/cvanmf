@@ -143,7 +143,7 @@ class BicvSplit:
             6, 7, 8
 
         :param mx: Split matrices in a flat list. These should be all of one
-        row, then all of the next row etc.
+            row, then all of the next row etc.
         :param design: Number of even splits on rows and columns of mx.
         :param i: Index of the split if one of many
         """
@@ -603,19 +603,22 @@ class NMFParameters(NamedTuple):
     """Random seed for initialising decomposition matrices; if None no seed
     used so results will not be reproducible."""
     alpha: float = 0.0
-    """Regularisation parameter applied to both H and W matrices."""
+    """Regularisation parameter applied to both :math:`H` and :math:`W` 
+    matrices."""
     l1_ratio: float = 0.0
     """Regularisation mixing parameter. In range 0.0 <= l1_ratio <= 1.0."""
     max_iter: int = 3000
     """Maximum number of iterations during decomposition. Will terminate earlier
     if solution converges."""
     keep_mats: bool = False
-    """Whether to return the H and W matrices as part of the results."""
+    """Whether to return the :math:`H` and :math:`W` matrices as part of the 
+    results."""
     beta_loss: str = "kullback-leibler"
     """Beta loss function for NMF decomposition."""
     init: str = "nndsvdar"
-    """Initialisation method for H and W matrices on first step. Defaults to 
-    randomised non-negative SVD with small random values added to 0s."""
+    """Initialisation method for :math:`H` and :math:`W` matrices on first step.
+     Defaults to randomised non-negative SVD with small random values added to 
+     0s."""
 
     @property
     def log_str(self) -> str:
@@ -847,7 +850,7 @@ def rank_selection(x: pd.DataFrame,
         Used only where one of the matrices during bi-cross steps is not
         fixed. See sklearn documentation for values.
     :param design: How many blocks to split the input matrix into on rows and
-    columns respectively. Defaults to 3x3 9-fold design.
+        columns respectively. Defaults to 3x3 9-fold design.
     :param progress_bar: Show a progress bar while running.
     :returns: Dictionary with entry for each rank, containing a list of
         results for each shuffle (as a :class:`BicvResult` object)
@@ -940,7 +943,9 @@ def suggest_rank(
     :param rank_selection_results: Results from :func:`rank_selection`, or
         these results in DataFrame format from
         :meth:`BicvResult.results_to_table`
-    :param summarise: Function to summarise results from a shuffle
+    :param summarise: Function to summarise results from a shuffle. Roughly
+        speaking, determines which point represent the middle of the
+        distribution of values for purposes of the curve.
     :param measures: The measures to consider if passed a DataFrame
     :param kwargs: Arguments passed to ``KneeLocator`` constructor
     """
@@ -967,19 +972,24 @@ def suggest_rank_stability(
         near_max: float = 0.02,
         **kwargs
 ) -> Dict[str, int]:
-    """Suggest a suitable rank.
+    """Suggest a suitable rank in stability based measures.
 
     Attempt to identify peaks in stability based rank selection criteria
     (cophenetic correlation, dispersion, signature similrity). By default the
     highest peak is selected. Where there are many similar ranks (defined by
-    `near_max`), the one with the most consecutively decreasing values after it.
+    `near_max`), the one with the most consecutively decreasing values after it
+    is selected.
 
     Please note this is only a suggestion of a suitable rank; the plots
     should still be inspected and decompositions of candidate ranks inspected to
     make a final decision.
 
-    :param rank_selection_results: Results from :func:`decomposition`,
-        or series produced by :func:`dispersion`,
+    When making a plot multiple times (changing parameters etc), it may be
+    preferable to calculate the measures then pass the results as a list of
+    Series, as the calculation can be time consuming.
+
+    :param rank_selection_results: Results from :func:`decompositions`,
+        or a collection of series produced by :func:`dispersion`,
         :func:`cophenetic_correlation`, and :func:`signature_similarity`, or a
         DataFrame of those series joined.
     :param measures: The measures to consider if passed a DataFrame
@@ -1109,6 +1119,10 @@ def plot_rank_selection(results: Dict[Union[int, float], List[BicvResult]],
     define which measures to include using include, or which to exclude using
     exclude. You can also use show_all to show all the measures.
 
+    For `cosine_similarity` and `r_squared`, an suggestion of optimal rank
+    is given by identifying an elbow point in the graph using the package
+    ``kneed``, indicated by a star above that rank.
+
     :param results: Dictionary of results, with rank as key and a list of
         :class:`BicvResult` for that rank as value
     :param exclude: Measures from :class:`BicvResult` not to plot.
@@ -1120,7 +1134,7 @@ def plot_rank_selection(results: Dict[Union[int, float], List[BicvResult]],
         of a given shuffle.
     :param suggested_rank: Estimate rank using :func:`suggest_rank`.
     :param stars_at: Manually define x-axis values at which to place stars
-        above the main plot. Mainly used to allow :method:`plot_regu_selection`
+        above the main plot. Mainly used to allow :func:`plot_regu_selection`
         to pass where to plot stars for regularisation selection.
     :param star_size: Size of star indicating suggested rank.
     :param jitter: Draw individual points for each shuffle above the main plot.
@@ -1334,9 +1348,9 @@ def regu_selection(x: pd.DataFrame,
     This method returns a tuple with
 
     * a float which is the tested alpha which meets the criteria in
-        the ES paper
+      the ES paper
     * a dictionary with each alpha value as a key, and a list containing one
-        :class:`BicvResult` for each shuffle
+      :class:`BicvResult` for each shuffle
 
     :param x: Input matrix.
     :param rank: Rank of decomposition.
@@ -1366,7 +1380,7 @@ def regu_selection(x: pd.DataFrame,
         fixed. See sklearn documentation for values.
     :param progress_bar: Show a progress bar while running.
     :param design: Number of blocks to split input into on rows and columns
-    respectively for bicrossvalidation,
+        respectively for bicrossvalidation.
     :returns: Dictionary with entry for each rank, containing a list of
         results for each shuffle (as a :class:`BicvResult` object)
     """
@@ -1500,13 +1514,13 @@ def plot_regu_selection(
 ) -> plotnine.ggplot:
     """Plot regularisation selection results.
 
-    Takes a result from :function:`regu_selection` and passes to
-    :function:`plot_rank_selection` to plot with alpha values along the
+    Takes a result from :func:`regu_selection` and passes to
+    :func:`plot_rank_selection` to plot with alpha values along the
     x-axis. Consequently, pass any parameters for plotting as kwargs.
 
-    :param regu_res: Results from :function:`regu_selection`.
+    :param regu_res: Results from :func:`regu_selection`.
     :param alpha_star: Suggest and plot a suitable alpha value using
-    :function:`suggest_alpha`.
+        :func:`suggest_alpha`.
     """
 
     # regu_selection returns a tuple with best alpha value and dictionary of
@@ -1546,8 +1560,8 @@ def bicv(params: Optional[NMFParameters] = None, **kwargs) -> BicvResult:
     """Perform a single run of bicrossvalidation.
 
     Perform one run of bicrossvalidation. Parameters can either be passed
-    as a :class:`BicvParameters` tuple and are documented there, or by keyword
-    arguments using the same names as :class`BicvParameters`.
+    as a :class:`NMFParameters` tuple and are documented there, or by keyword
+    arguments using the same names as :class:`NMFParameters`.
 
     :returns: Comparisons of the held out submatrix and estimate for each fold
     """
@@ -1752,16 +1766,22 @@ def signature_similarity(
     """Mean cosine similarity of signatures for rank selection
 
     This rank selection criteria is based on the intuition that if a solution
-    is good, it should be across multiple random initialisation of the data,
-    similar to the approach underling :func:`copehenetic_correlation` and
+    is good, it should be across similar multiple random initialisation of the
+    data, similar to the motivation for :func:`cophenetic_correlation` and
     :func:`dispersion`.
 
     We pair signatures based on a cosine similarity (see
-    :func:`stability.match_signatures`) and take the mean value between paired
-    signatures at a rank, and look for clear peaks.
+    :func:`cvanmf.stability.match_signatures`) and take the mean value between
+    paired signatures at a rank, and look for clear peaks.
+
+    Similarity is calculated between the best decomposition and all otherwise,
+    not all possible pairs.
 
     The paired cosine similarity can also be visualised in more detail using
-    :func:`stability.plot_signature_stability`.
+    :func:`cvanmf.stability.plot_signature_stability`.
+
+    :param decompositions: Decompositons for several ranks as output by
+        :func:`decompositions`.
     """
 
     from cvanmf.stability import signature_stability
@@ -1820,9 +1840,9 @@ def dispersion(
     This shares the same underlying data structure as
     :func:`cophenetic_correlation`, the average consensus matrix, looking at
     how often elements are assigned to the same signature, with elements
-    assigned to the signature with maximum weight. The value ranges between 0
-    and 1 with 1 indicating perfect stability, and 0 a highly scattered
-    consensus matrix.
+    assigned to the signature with maximum weight. The value for dispersion
+    ranges between 0 and 1, with 1 indicating perfect stability, and 0 a highly
+    scattered consensus matrix.
 
     Our primary method for rank selection is bicrossvalidation, but we offer
     the ability to calculate dispersion when you have performed multiple
@@ -1859,19 +1879,22 @@ def plot_stability_rank_selection(
         suggested_rank: bool = True,
         on: Literal['h', 'w'] = 'h'
 ) -> plotnine.ggplot:
-    """Plot results for stability based rank selection methods.
+    """Plot results for stability based rank selection methods (
+    :func:`signature_stability`, :func:`cophenetic_correlation`,
+    :func:`dispersion`).
 
     Automated rank selection uses :func:`suggest_rank_stability`.
 
     :param decompositions: Results from :func:`decompositions`. Not used if
         series is passed.
-    :param series: Series to plot, resulting from
-        :func:`cophenetic_correlation` or :func:`dispersion`.
+    :param series: Series to plot, resulting from :func:`signature_similarity`,
+        :func:`cophenetic_correlation`, or :func:`dispersion`.
     :param include: Which method to include in the plot,
-        with 'cophenetic_correlation' being cophenetic correlation and
-        'dispersion' being dispersion.
-    :param suggested_rank: Estimate suggested rank.
-    :param: Calculate stability of H (samples) or W (features). Not used if
+        a list containing values from ``{'cophenetic_correlation', 'dispersion',
+        'signature_similarity'}``.
+    :param suggested_rank: Make an estimate of estimate suggested rank using
+        :func:`suggest_rank_stability`.
+    :param on: Calculate stability of H (samples) or W (features). Not used if
         passed series.
     """
     if series is None and decompositions is None:
@@ -2415,21 +2438,21 @@ def decompositions(
     :param ranks: Rank(s) of decompositions to be produced
     :param random_starts: Number of random initialisations to be tried for
         each rank. Ignored if using a deterministic initialisations.
-    :param top_n: Number of decompositions to be return for each rank.
+    :param top_n: Number of decompositions to be returned for each rank.
     :param top_criteria: Criteria to use when determining which are the top
         decompositions. Can be one of beta_divergence, rss, r_squared,
         cosine_similairty, or l2_norm.
     :param seed: Seed or random generator used
-    :param alpha: Regularisation parameter approach to both H and W matrices.
+    :param alpha: Regularisation parameter applied to both H and W matrices.
     :param l1_ratio: Regularisation mixing parameter. In range 0.0 <= l1_ratio
           <= 1.0. This controls the mix between sparsifying and densifying
           regularisation. 1.0 will encourage sparsity, 0.0 density
     :param max_iter: Maximum number of iterations during decomposition. Will
         terminate earlier if solution converges
-    :param beta_loss: Beta loss function for NMF decomposition.
+    :param beta_loss: Beta loss function for NMF decomposition
     :param init: Initialisation method for H and W matrices on first step.
-        Defaults to random.
-    :param progress_bar: Display progress bar.
+        Defaults to random
+    :param progress_bar: Display progress bar
     """
 
     # Set up a dictionary of arguments
@@ -2547,16 +2570,25 @@ class Decomposition:
     Note that we use the naming conventions and orientation common in NMF
     literature:
 
-    * X is the input matrix, with m features on rows, and n samples on columns.
-    * H is the transformed data, with k signatures on rows, and n samples on
+    * :math:`X` is the input matrix, with m features on rows, and n samples on
       columns.
-    * W is the feature weight matrix, with m features on rows, and m
+    * :math:`H` is the transformed data, with k signatures on rows, and n
+      samples on columns.
+    * :math:`W` is the feature weight matrix, with m features on rows, and m
       features on columns.
 
     The scikit-learn implementation has these transposed; this package
     handles transposing back and forth internally, and expects input in the
-    features x samples orientation, and provides W and H inline with the
-    literature rather than scikit-learn.
+    features x samples orientation, and provides :math:`W` and :math:`H` inline
+    with the literature rather than scikit-learn.
+
+    Decomposition objects can be sliced using the syntax::
+
+        sliced_model = model[samples, features, signatures]
+        # Only slice on one dimension
+        sliced_signatures = model[:, :, ['S1', 'S2']]
+
+    Slices must be ordered collections of strings, integer indices, or booleans.
     """
 
     TOP_CRITERIA: Dict[str, bool] = dict(
@@ -2567,7 +2599,10 @@ class Decomposition:
         beta_divergence=False
     )
     """Defines which criteria are available to select the best decomposition
-    based on, and whether to take high values (True) or low values (False)."""
+    based on, and whether to take high values (True) or low values (False).
+    
+    :meta private:
+    """
 
     DEF_SCALES: List[List[str]] = [
         # Used by preference, Bang Wong's 7 distinct colours for colour
@@ -2743,12 +2778,20 @@ class Decomposition:
 
     @property
     def h(self) -> pd.DataFrame:
-        """Signature by sample matrix of signature weights."""
+        """Signature weights in each sample.
+
+        Matrix with samples on columns, and signatures on rows, with each entry
+        being a signature weight. This is not scaled, see :meth:`scaled`.
+        """
         return self.__h
 
     @property
     def w(self) -> pd.DataFrame:
-        """Feature by signature matrix of signature weights."""
+        """Feature weights in each signature.
+
+        Matrix with signatures on columns, and features on rows, with each entry
+        being a signature weight. This is not scaled, see :meth:`scaled`
+        """
         return self.__w
 
     @property
@@ -2779,14 +2822,14 @@ class Decomposition:
 
     @property
     def rss(self) -> float:
-        """Residual sum of squares between flattened :math:`X` and
-        :math:`WH`."""
+        """Residual sum of squares between flattened :math:`X`
+        and :math:`WH`."""
         return _rss(self.parameters.x.values,
                     self.w.dot(self.h).values)
 
     @property
     def l2_norm(self) -> float:
-        """L2 norm between flattened :math:`X` and math:`WH`."""
+        """L2 norm between flattened :math:`X` and :math:`WH`."""
         return _l2norm_calc(self.parameters.x.values,
                             self.w.dot(self.h).values)
 
@@ -2794,7 +2837,7 @@ class Decomposition:
     def sparsity_w(self) -> float:
         """Sparsity of :attr:`w` matrix.
 
-        This is the proportion of entries in the :math:`W` matrix are 0.
+        This is the proportion of entries in the :math:`W` matrix which are 0.
         """
         return _sparsity(self.w.values)
 
@@ -2802,7 +2845,7 @@ class Decomposition:
     def sparsity_h(self) -> float:
         """Sparsity of :attr:`h` matrix.
 
-        This is the proportion of entries in the :math:`H` matrix are 0.
+        This is the proportion of entries in the :math:`H` matrix which are 0.
         """
         return _sparsity(self.h.values)
 
@@ -2851,7 +2894,15 @@ class Decomposition:
 
     @property
     def names(self) -> List[str]:
-        """Names for each of the signatures."""
+        """Names for each of the signatures.
+
+        New names for signatures can be given as a list. This will change
+        the name in the :attr:`w` and :attr:`h` matrices::
+
+            # Set new names for a model with 4 signatures
+            mdoel.names = ['A', 'B', 'X', 'Y']
+
+        """
         return list(self.h.index)
 
     @names.setter
@@ -2872,7 +2923,7 @@ class Decomposition:
         """Signature with the highest weight for each sample.
 
         The primary signature for a sample is the one with the highest weight
-        in the math:`H` matrix. In the unusual case where all signatures have 0
+        in the :math:`H` matrix. In the unusual case where all signatures have 0
         weight for a sample, this will return NaN, and is likely a sign of
         a poor model."""
         # Replace 0s with NA, as cannot have a max when picking between 0s
@@ -2897,7 +2948,20 @@ class Decomposition:
 
     @property
     def colors(self) -> List[str]:
-        """Color which represents each signature in plots."""
+        """Colors which represents each signature in plots.
+
+        Colors default to a colorblind distinct palette.
+
+        Colors can be changed by setting this property. A list can be provided,
+        or a dictionary mapping signature name to new color::
+
+            # For a model with three signatures S1, S2, S3
+            # Change all colors with list
+            model.colors = ['red', 'blue', '#ffffff']
+            # Change two colors using dictionary
+            model.colors = dict(S1='green', S3='#000000')
+
+        """
         return self.__colors
 
     @colors.setter
@@ -2974,10 +3038,10 @@ class Decomposition:
         Represenative signatures are those for which the cumulative sum is
         equal to or lower than the threshold value.
 
-        This is done by considering each sample in the sample scaled H matrix,
-        and taking a cumulative sum of weights in descending order. Any
-        signature for which the cumulative sum is less than or equal to the
-        threshold is considered representative.
+        This is done by considering each sample in the sample :meth:`scaled`
+        :math:`H` matrix, and taking a cumulative sum of weights in descending
+        order. Any signature for which the cumulative sum is less than or equal
+        to the threshold is considered representative.
 
         :param threshold: Cumulative sum below which samples are considered
             representative.
@@ -2996,7 +3060,7 @@ class Decomposition:
         """Which samples have a monodominant signature.
 
         A monodominant signature is one which represents at least the
-        threshold amount of the weight in the scaled h matrix.
+        threshold amount of the weight in the :meth:`scaled` :math:`H` matrix.
 
         :param threshold: Proportion of the scaled H matrix weight to consider
             a signature dominnant.
@@ -3022,25 +3086,26 @@ class Decomposition:
                 ) -> Decomposition:
         """Get signature weights for new data.
 
-        When the features in y exactly match those used to learn this
-        decomposition, you can set the input_validation and feature_match
-        parameters as None.
+        When the features in ``y`` exactly match those used to learn this
+        decomposition, you can set the ``input_validation`` and
+        ``feature_match`` parameters as None.
 
         In some cases, the features in new data y may not exactly match
         those used in the original decomposition, for instance if you have new
         microbiome data there may be different taxa present, or a different
-        naming format may be used in the new data. The function feature_match
-        can be used to handle these cases, by defining a function to map names
-        between new and existing data. The input_validation functions is
-        largely used for existing models, to valdiate that data being provided
-        is the expected format.
+        naming format may be used in the new data. The function
+        ``feature_match`` can be used to handle these cases, by defining a
+        function to map names between new and existing data. The
+        ``input_validation`` functions is largely used for existing models, to
+        valdiate that data being provided is the expected format.
 
         :param y: New data of the same type used to generate this decomposition
-        :param input_validation: Function to validate and transform y
-        :param feature_match: Function to match features in y and w
-        :param kwargs: Arguments to pass to validate_input and feature_match
+        :param input_validation: Function to validate and transform ``y``
+        :param feature_match: Function to match features in ``y`` and :attr:`w`
+        :param kwargs: Arguments to pass to ``validate_input`` and
+            ``feature_match``
         :return: :class:`Decomposition` with signature weights for samples in
-            y.
+            ``y``.
         """
         # Wrapper around the _reapply_model function
         from cvanmf.reapply import match_identical
@@ -3067,10 +3132,14 @@ class Decomposition:
         Scale a matrix to a proportion of the feature/sample total, or
         to a proportion of the signature total.
 
-        :param matrix: Matrix to be scaled, one of H or W, or a string
-            {'h', 'w'}.
-        :param by: Scale to proportion of sample, feature, or signature
-            total.
+        :param matrix: Matrix to be scaled, one of :attr:`h` or :attr:`w`, or a
+            string from ``{'h', 'w'}.``
+        :param by: Scale to proportion of ``sample``, ``feature``, or
+            ``signature`` total. This defaults to
+
+            * :math:`H`: ``sample``
+            * :math:`W`: ``signature``
+
         :return: Scaled version of matrix.
         """
 
@@ -3124,18 +3193,19 @@ class Decomposition:
             self,
             on: Union[Literal['h', 'w'], pd.DataFrame] = 'h'
     ) -> sparse.csr_array:
-        """Consensus matrix of either H or W.
+        r"""Consensus matrix of either :math:`H` or :math:`W`.
 
-        Most typically, the consensus matrix is calculated on the H matrix,
-        and is a binary matrix representing whether :math:`i` is
+        Most typically, the consensus matrix is calculated on the :math:`H`
+        matrix, and is a binary matrix representing whether sample :math:`i` is
         assigned to the same signature as sample :math:`j`. Samples are
         assigned to signatures based on their maximum weight. When calculated
-        on W, it is the same but for features assigned.
+        on :math:`W`, it is the same but for features assigned.
 
         The primary use of this is in generating a :math:`\bar{C}` matrix, the
         mean number of times two elements are assigned to the same signature.
-        :math:`\bar{C}` is used to calculate the cophenetic correlation,
-        a method of determining suitable rank.
+        :math:`\bar{C}` is used to calculate the :meth:`cophenetic_correlation`
+        and :meth:`dispersion` coefficients, a method of determining suitable
+        rank.
 
         This is returned as a lower triangular matrix in sparse format.
         """
@@ -3192,7 +3262,7 @@ class Decomposition:
         0 is perpendicular.
 
         This is a convenience method which calls
-        :func:`combine.compare_signatures`.
+        :func:`stability.compare_signatures`.
 
         :param b: Signature matrix, or object with signature matrix
         :returns: Matrix with cosine of angles between signature vectors.
@@ -3219,7 +3289,7 @@ class Decomposition:
         well their paired one, while being dissimilar to all others.
 
         This is a convenince method which calls
-        :func:`cvanmf.combine.match_signatures`.
+        :func:`stability.match_signatures`.
 
         :param b: Signature matrix, or object with signature matrix
         :returns: DataFrame with pairing and scores
@@ -3245,7 +3315,7 @@ class Decomposition:
         :param cumulative_sum: Add features up to this cumulative sum (from
             max to min).
         :param max_char_length: Maximum length of new name (before joining
-            with feature delimiter.
+            with feature delimiter).
         :param max_num_features: Maximum number of features to use in name.
         :param feature_delimiter: When multiple features used, will join with
             this character
@@ -3292,7 +3362,7 @@ class Decomposition:
         """Plot model fit distribution.
 
         This provides a histogram of the model fit of samples by default. If
-        a grouping is provide, this will instead produce boxplots with each
+        a grouping is provided, this will instead produce boxplots with each
         box being the distribution within a group.
 
         :param group: Series giving label for group which each sample
@@ -3342,12 +3412,12 @@ class Decomposition:
         It may be of interest to look at the model fit of individual samples,
         so this plot shows the model fit of each sample as a point on a
         vertical scale. A threshold can be set below which the point will be
-        coloured red to indicate low model fit, by default this is 0.4. The
-        plot is intended to behave well when vertically stacked with the
-        relative weight plot produced by :meth:`plot_relative_weight`
+        coloured red to indicate low model fit, by default this is 0.4.
 
         :param threshold: Value below which to colour the model fit red. If
-            omitted will not color any samples.
+            omitted will not color any samples. The default of 0.4 is specific
+            to the 5ES model (:func:`cvanmf.models.five_es`) and does not neccesarily
+            represent a good threshold for other models.
         """
         mf_df: pd.DataFrame = (self.model_fit
                                .to_frame("model_fit")
@@ -3401,7 +3471,7 @@ class Decomposition:
     ):
         """Plot relative weight of each signature in each sample.
 
-        To display the plot in a notebook environment, use `result.render()`.
+        To display the plot in a notebook environment, use ``result.render()``.
         Please note this plot uses the marsilea package rather than
         plotnine like other plots. Unfortunately, the options for combining
         multiple elements are not yet well developed in plotnine.
@@ -3412,22 +3482,21 @@ class Decomposition:
         sample, and a ribbon along displaying categorical metadata for samples.
 
         :param group: Categorical metadata for each sample to plot on ribbon
-        at the bottom
+            at the bottom
         :param group_colors: Colour to associate with each of the metadata
-        categories.
+            categories.
         :param model_fit: Include a top row indicating model fit per sample.
-        :param heights: Height in inches for each component of the plot. Only
-        used when including model fit or ribbon. Specify as a dictionary
-        with keys 'dot', 'ribbon', 'bar', 'labels', or a list with heights for
-        the elements included from top to bottom.
+        :param heights: Height in inches for each component of the plot.
+            Specify as a dictionary with keys 'dot', 'ribbon', 'bar', 'labels',
+            or a list with heights for the elements included from top to bottom.
         :param width: Width of plot.
         :param sample_label_size: Size for sample labels. Set to 0 to remove
-        sample labels.
-        :legend_cols_sig: Number of columns in Signature legend.
-        :legend_cols_grp: Number of columns in group legend.
-        :legend_side: Location of Signature and group legend. One of 'top',
-        'right', 'left', 'bottom'
-        :return: Marsilea whiteboard object. Call .render() to show plot.
+            sample labels.
+        :param legend_cols_sig: Number of columns in Signature legend.
+        :param legend_cols_grp: Number of columns in group legend.
+        :param legend_side: Location of Signature and group legend. One of
+            'top', 'right', 'left', 'bottom'
+        :return: Marsilea whiteboard object. Call ``.render()`` to show plot.
         """
         # Parse height arguments
         if heights is not None:
@@ -3580,17 +3649,18 @@ class Decomposition:
              ) -> OrdinationResults:
         """Principal Coordinates Analysis of decomposition.
 
-        Performs PCoA on the specified matrix, and results a scikit-bio
+        Performs PCoA on the specified matrix, and returns a scikit-bio
         OrdinationResults object. Can base distances on any matrix which has
         a column for each sample, or specify one of these via string. Defaults
-        to distances based on scaled h (signature weight in sample) matrix.
+        to distances based on :meth:`scaled` :math:`H` (signature weight in
+        sample) matrix.
 
         Matrix is Wisconsin double standardised by default, as described in R
-        function `cmdscale`.
+        function ``cmdscale``.
 
         Distance defaults to Bray-Curtis dissimilarity, and is square root
-        transformed. Distance is calculated with scipy pdist function, and any
-        method supported there can be specified in distance argument.
+        transformed. Distance is calculated with scipy ``pdist`` function, and
+        any method supported there can be specified in distance argument.
 
         :param on: Matrix to derive distances from
         :param distance: Distance method to use
@@ -3692,10 +3762,10 @@ class Decomposition:
         """Ordination of samples.
 
         Perform PCoA of samples and plot first two axes. PCoA performed by the
-        `pcoa` method, and arguments in kwargs are passed on to this method.
-        Samples are coloured by primary ES.
+        :meth:`pcoa` method, and arguments in kwargs are passed on to this
+        method. Samples are coloured by primary ES.
 
-        :param axes: Indices of axes to plot
+        :param axes: Indices of PCoA axes to plot
         :param color: Metadata to use to color the points, or 'signature' to
             color based on the primary signature
         :param shape:  Metadata to used to decide shape of points,
@@ -3987,21 +4057,21 @@ class Decomposition:
         adjusted p value of 0.001.
 
         :param metadata: Dataframe of metadata variables to test against. Can
-        only handle discrete values.
+            only handle discrete values.
         :param against: What to test the metadata against. This can be
-        'signatures' for relative H weights, 'model_fit' for per sample
-        cosine similarity, or 'both' (default). You can also provide any
-        arbitrary matrix with the correct dimensions, for instance if you had
-        done some custom processing of the H matrix, or wanted to use
-        absolute H weights.
-        :param drop_na: Remove any samples with NA values for metadata before
-        testing. This is done on a per test basis, so one NA will not cause
-        a sample to be removed for all tests.
+            ``signature`` for relative :math:`H` weights, ``model_fit`` for per
+            sample cosine similarity, or ``both`` (default). You can also
+            provide any arbitrary matrix with the correct dimensions, for
+            instance if you had done some custom processing of the :math:`H`
+            matrix, or wanted to use absolute :math:`H` weights.
+        :param drop_na: Remove any samples with ``NA`` values from metadata
+            before testing. This is done on a per test basis, so one ``NA`` will
+            not cause a sample to be removed for all tests.
         :param adj_method: Method to adjust for multiple tests. This is applied
-        both locally (for each metadata category), and globally (
-        considering all tests). Accepts any method supported by
-        statsmodels multipletests.
-        :param alpha: Threshold value to reject H0
+            both locally (for each metadata category), and globally (considering
+            all tests). Accepts any method supported by statsmodels
+            ``multipletests``.
+        :param alpha: Threshold value to reject :math:`H0`.
         :return: Dataframe with results for each signature and each metadata
             variable.
         """
@@ -4107,19 +4177,18 @@ class Decomposition:
         Produce plots of signature weight against metadata. Produces two plots,
         one with boxplots for categorical metadata, one with scatter plots for
         continuous metadata. Will infer which type each column is. To use an
-        integer as categorical, convert it to Categorical type in pandas.
+        integer as categorical, convert it to Categorical type in pandas. Will
+        conduct univariate tests as described in :meth:`univariate_tests` and
+        indicate significance with symbols. This will be skipped if
+        ``show_significance`` is False, which maybe be sensible for larger
+        numbers of samples and metadata categories.
 
-        :param univariate_test_params: Parameters passed to
-            :meth:`univariate_tests`
-        :param significance_formatter: Function which takes the p-value and
-            adjusted p-values and returns a string to use as label.
-        :param show_significance: Add significance to each subplot for discrete
-            metadata.
         :param metadata: Dataframe with samples on rows, and metadata on
             columns.
         :param against: DataFrame to plot the metadata against. Should
             contain an entry for each sample, with samples on rows. Defaults to
-            scaled H matrix (transpose of typical H format).
+            :meth:`scaled` :math:`H` matrix (transpose of typical :math:`H`
+            orientation).
         :param continuous_fn: Function to determine if a column is
             continuous. Defaults to considering any floating type or integer to
             be continuous. May want to customise if you want to use things such
@@ -4127,14 +4196,21 @@ class Decomposition:
         :param discrete_fn: Function to determine if a column is categorial.
             Defaults to considerings any string, or object type column with
             a number of unique values < 3/4 its length as categorical.
-        :param boxplot_params: Dictionary of parameters to pass to geom_boxplot.
-            These will be fixed parameters (so color="pink" to set all box
-            outlines to pink).
+        :param boxplot_params: Dictionary of parameters to pass to
+            ``geom_boxplot.`` These will be fixed parameters (so color="pink"
+            to set all box outlines to pink).
         :param point_params: Dictionary of parameters to pass to geom_point.
             Will be fixed parameters, see above.
         :param disc_rotate_labels: Angle to rotate x axis labels by for
             boxplots.
-        :return: A tuple of plotnine ggplot objects, first is boxplots,
+        :param show_significance: Add significance to each subplot for discrete
+            metadata.
+        :param significance_formatter: Function which takes the p-value and
+            adjusted p-values and returns a string to use as label. Defaults
+            to :meth:`Decomposition.significance_format`.
+        :param univariate_test_params: Parameters passed to
+            :meth:`univariate_tests`
+       :return: A tuple of plotnine ggplot objects, first is boxplots,
             second is scatter plots.
         """
         continuous_fn = (_is_series_continuous if continuous_fn is None
@@ -4291,15 +4367,24 @@ class Decomposition:
         return plt_metadata
 
     @staticmethod
-    def significance_format(p, local_adj, global_adj) -> str:
-        """"Convert p-values from unvariate tests to display strings.
+    def significance_format(
+            p: float,
+            local_adj: float,
+            global_adj: float
+    ) -> str:
+        """Convert p-values from unvariate tests to display strings.
         
         By default, this will use the following strategy:
-        global_adj =< 0.01 = ***
-        global_adj =< 0.05 = **
-        global_adj =< 0.1  = *
-        p =< 0.01 = ..
-        p =< 0.05 = .
+
+        * global_adj =< 0.01 -> ***
+        * global_adj =< 0.05 -> **
+        * global_adj =< 0.1  -> *
+        * p =< 0.01 -> ..
+        * p =< 0.05 -> .
+
+        If implementing a custom formater, ``p`` is the unadjusted p-value,
+        ``local_adj`` the adjusted p-value only considering the tests for one
+        metadata category, and ``global_adj`` considering all tests.
         """
         qc: List[Tuple[float, str]] = [(0.01, "***"), (0.05, "**"), (0.1, "*")]
         pc: List[Tuple[float, str]] = [(0.01, ".."), (0.05, '.')]
@@ -4338,13 +4423,13 @@ class Decomposition:
         :param symlink: Make symlinks ot param_path and x_path if possible.
         :param delim: Delimiter to used for tabular output.
         :param plots: Determine which plots to write. When left default
-        (None) this will produce all plots if there are 500 or fewer samples.
-        If True, all plots will produced; if False no plots will be produced.
-        If a list is provided, any plots named in the list will be produced,
-        i.e. if given ['pcoa', 'modelfit', 'radar'], plots from
-        :meth:`plot_pcoa` and : meth:`plot_modelfit` would be produced.
-        'radar' would be ignored as there is no `plot_radar` method.
-        ."""
+            (None) this will produce all plots if there are 500 or fewer samples.
+            If True, all plots will produced; if False no plots will be produced.
+            If a list is provided, any plots named in the list will be produced,
+            i.e. if given ['pcoa', 'modelfit', 'radar'], plots from
+            :meth:`plot_pcoa` and : meth:`plot_modelfit` would be produced.
+            'radar' would be ignored as there is no `plot_radar` method.
+        """
 
         out_dir = pathlib.Path(out_dir)
         logger.debug("Create decomposition output dir: %s", out_dir)
@@ -4572,10 +4657,10 @@ class Decomposition:
 
         Loads a decomposition previously saved using :meth:`save`. Will
         automatically determine whether this is a directory or .tar.gz.
-        Can provide a DataFrame of the X input matrix, primarily this is
+        Can provide a DataFrame of the :math:`X` input matrix, primarily this is
         so when loading multiple decompositions they can all reference the
         same object. Can also provide an explicit path; if not provided will
-        attempt to load from x.tsv.
+        attempt to load from ``x.tsv``.
 
         :param in_dir: Directory or .tar.gz containing decomposition.
         :param x: Either the X input matrix as a DataFrame, or a path to
@@ -4650,7 +4735,7 @@ class Decomposition:
 
         Load a set of decompositions previously saved using
         :meth:`save_decompositions`. Will attempt to share a reference to
-        the same X matrix for memory reasons. The output is a dictionary
+        the same :math:`X` matrix for memory reasons. The output is a dictionary
         with keys being ranks, and values being lists of decompositions
         for that rank.
 
