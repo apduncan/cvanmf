@@ -1,15 +1,15 @@
 # Installation
 
-Currently the package is only installable via `pip` from github. In the 
-future I intend to provide a `conda`/`mamba` install. Currently I use 
-`mamba` to manage the python version, and pip to install `cvanmf`, as shown 
-below.
+The package can be installed from pypi via `pip`. In the future we intend to provide a `conda`/`mamba` install. 
+
+Our current suggestion for installation is to use `mamba` to manage the python version, and pip to install `cvanmf`, 
+as shown below.
 
 ## pip install
 First make a new environment with python 3.10 or higher
 
 ```commandline
-mamba create --name cvanmf 'python>=3.10'
+mamba create --name cvanmf 'python>=3.10' pip
 ```
 
 (If you use conda, substitute `mamba` for `conda` at the start). Once this has 
@@ -18,7 +18,7 @@ install it's dependencies.
 
 ```commandline
 mamba activate cvanmf
-pip install git+https://github.com/apduncan/cvanmf.git
+pip install cvanmf
 ```
 
 Test the installation by running one of the commands, which should now give 
@@ -46,12 +46,8 @@ or use the system package manager for to install (e.g. `sudo apt install gcc` fo
 To update to a new version of `cvanmf`, with your environment active, run
 
 ```commandline
-pip --force-reinstall --upgrade git+https://github.com/apduncan/cvanmf.git
+pip --upgrade cvanmf
 ```
-
-While the package isn't properly released yet, I'm not always bumping the 
-version number for new features etc, so `--force-reinstall` will mean the 
-package gets reinstalled even if the version number has remained the same.
 
 ## Additional installation: Jupyter
 Many examples in this documentation are written as Jupyter notebooks, and 
