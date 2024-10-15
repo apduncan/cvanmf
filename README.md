@@ -2,6 +2,9 @@
 An implementation of bicrossvalidation for Non-negative Matrix Factorisation (NMF) rank selection, along with methods
 for analysis and visualisation of NMF decomposition.
 
+For details on the method, please see:
+* Enterosignatures define common bacterial guilds in the human gut microbiome, Frioux, Clémence et al., Cell Host & Microbe, Volume 31, Issue 7, 1111 - 1125.e6 (https://doi.org/10.1016/j.chom.2023.05.024)
+
 ## Documentation
 Documentation can be found at [readthedocs](https://cvanmf.readthedocs.io).
 
@@ -25,3 +28,13 @@ Each row should describe something similar, e.g. each is the abundance of a micr
 A minimum of 2 samples is required.
 When number of samples $n$ is close to the number of signatures $k$, signatures are likely to represent individual 
 samples rather than broad patterns.
+
+## References
+If you use this tool please cite:
+For details on the method, please see:
+* Enterosignatures define common bacterial guilds in the human gut microbiome, Frioux, Clémence et al., Cell Host & Microbe, Volume 31, Issue 7, 1111 - 1125.e6 (https://doi.org/10.1016/j.chom.2023.05.024)
+
+For background on NMF, see:
+For background on  NMF see:
+* Lee & Seung, 1999 (https://doi.org/10.1038/44565) for the paper introducing NMF
+* Jiang et al, 2012 (https://doi.org/10.1007/s00285-011-0428-2) for a good description of the method and application to metagenomic data 
