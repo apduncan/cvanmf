@@ -1165,6 +1165,24 @@ def test_stability_rank_selection(small_decompositions_random):
         "Incorrect rank on shuffled index"
 
 
+def test_stability_only_one(small_overlap_blocks):
+    # Should give an empty DataFrame when only given rank 1 for rank selection
+    decomps: Dict[int, List[Decomposition]] = decompositions(
+        small_overlap_blocks,
+        ranks=[1],
+        random_starts=3,
+        top_n=3
+    )
+    c: pd.Series = cophenetic_correlation(decomps)
+    d: pd.Series = dispersion(decomps)
+    s: pd.Series = signature_similarity(decomps)
+    assert s.shape[0] == 0, "Signature similarity not meaningful on k=1"
+    assert c.shape[0] == 0, \
+        "Cophenetic correlation not meaningful on k=1"
+    assert d.shape[0] == 0, \
+        "Dispersion not meaningul on k=1"
+
+
 def test_plot_stability_rank_selection(
         small_decompositions_random,
         tmp_path: pathlib.Path,

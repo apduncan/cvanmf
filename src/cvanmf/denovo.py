@@ -1785,8 +1785,12 @@ def signature_similarity(
     """
 
     from cvanmf.stability import signature_stability
+    trimmed: Dict[int, List[Decomposition]] = _stability_remove_rank_one(
+        decompositions)
+    if len(trimmed) == 0:
+        return pd.Series(name='k')
     s: pd.Series = signature_stability(
-        _stability_remove_rank_one(decompositions)
+        trimmed
     ).groupby(['k'])['pair_cosine'].mean()
     s.name = 'signature_similarity'
     return s
