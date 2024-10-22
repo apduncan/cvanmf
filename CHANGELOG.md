@@ -1,5 +1,19 @@
 # CHANGELOG
 
+## v0.4.1 (2024-10-22)
+
+### Documentation
+
+* docs(*): update installation instructions ([`f05d1f9`](https://github.com/apduncan/cvanmf/commit/f05d1f9022cfcb7da7a36e03cb584073d011a0cc))
+
+* docs(*): fix some formatting ([`c5813f6`](https://github.com/apduncan/cvanmf/commit/c5813f6b987e768e8be393bac1ac6c9f97bfdb08))
+
+### Fix
+
+* fix(denovo.signature_similarity): fix rank 1 only behaviour
+
+changed `signature_similairty` to return an empty series when passed only rank 1 decompositions in line with `cophenetic_correlation` and `dispersion`. needed fix for a step in Nextflow pipeline when using k=1. ([`16278f5`](https://github.com/apduncan/cvanmf/commit/16278f527607f9a877c51e812c70c56b1f62dc03))
+
 ## v0.4.0 (2024-09-30)
 
 ### Feature
