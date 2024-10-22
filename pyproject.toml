@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cvanmf"
-version = "0.4.0"
+version = "0.4.1"
 description = "Bi-cross validation of NMF and signature generation and analysis"
 authors = ["Anthony Duncan", "Clémence Frioux", "Falk Hildebrand"]
 license = "GNU General Public License v2.0"
