@@ -1780,7 +1780,7 @@ def signature_similarity(
     The paired cosine similarity can also be visualised in more detail using
     :func:`cvanmf.stability.plot_signature_stability`.
 
-    :param decompositions: Decompositons for several ranks as output by
+    :param decompositions: Decompositions for several ranks as output by
         :func:`decompositions`.
     """
 
@@ -4400,6 +4400,71 @@ class Decomposition:
                 return val
         return ""
 
+    def plot_weight_distribution(
+            self,
+            threshold: float = 0.0,
+            scale_transform: Optional[str] = "log10",
+            nrows: int = 1
+    ) -> plotnine.ggplot:
+        """Plot the distribution of feature weights in each signature.
+        
+        The distribution of signature weights helps described how mixed the 
+        features are which describe a sample. This will sort feature weights
+        for each signature independently, and plot a bar for the weight of
+        each feature. So distributions which are longer indicate more features
+        contribute to that signature, and the height of bars indicates
+        whether this is a long tail of low weights, all even, etc.
+
+        :param threshold: Set any weight below this to 0. Effectively, consider
+        very low weights to not contribute to the signature.
+        :param scale_transform: Transformation to apply to the feature weight
+        axis. Can be any of the transforms in `mizani`. For no transformation,
+        pass None or "identity".
+        :param nrows: Number of rows in the plot. Defaults to having all plots
+        on one row for comparability.
+        """
+
+        def apply_sort(x):
+            x = x.sort_values(ascending=False)
+            x.index = range(1, len(x) + 1)
+            return x
+
+        weight_df: pd.DataFrame = self.scaled('w').apply(
+            lambda x: apply_sort(x)).stack().reset_index()
+        weight_df.columns = ['order', 'signature', 'weight']
+        weight_df = weight_df.loc[weight_df['weight'] > threshold]
+
+        if scale_transform is None:
+            scale_transform = "identity"
+        # If log transforming, 1+relative has a more intuitive interpretation
+        scale_label: str = ""
+        if "log" in scale_transform:
+            logger.info("Using 1+relative weight for log scale")
+            weight_df['weight'] = 1 + weight_df['weight']
+            scale_label = "(1+relative weight)"
+
+        fig_weight_dist = (
+            plotnine.ggplot(
+                weight_df.loc[weight_df['weight'] > threshold],
+                plotnine.aes(x='order', y='weight', fill='signature')
+            )
+            + plotnine.geom_col(width=1)
+            + plotnine.facet_wrap(['signature'], nrow=nrows)
+            + plotnine.scale_y_continuous(trans=scale_transform)
+            + plotnine.scale_x_continuous(expand=(0, 0))
+            + plotnine.coord_flip()
+            + plotnine.theme(
+                figure_size=(len(self.names), 2),
+                axis_text_x=plotnine.element_text(angle=35, hjust=1)
+            )
+            + self.fill_scale
+            + plotnine.ylab(
+                f"Relative Weight\n({scale_transform}{scale_label})"
+            )
+            + plotnine.xlab("")
+            + plotnine.guides(fill="none")
+        )
+        return fig_weight_dist
 
     def save(self,
              out_dir: Union[str, pathlib.Path],

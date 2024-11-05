@@ -260,10 +260,10 @@ def is_bicv_split_ok(
     # Out of range fold
     m, n = design
     with pytest.raises(IndexError):
-        shuffles[0].fold(m*n+1)
+        shuffles[0].fold(m * n + 1)
 
     folds: List[BicvFold] = shuffles[0].folds
-    assert len(folds) == m*n, f"Should have {m*n} folds"
+    assert len(folds) == m * n, f"Should have {m * n} folds"
     assert all([isinstance(x, BicvFold) for x in folds]), \
         "folds property returns incorrect type"
 
@@ -1019,6 +1019,7 @@ def test_univariate_tests(small_decomposition):
         lambda x: x.iloc[1].count(x.iloc[0]), axis=1
     ) == 2).all(), "Some post-hoc tests not significant when should be."
 
+
 def test_plot_metadata(
         small_decomposition,
         small_decomposition_metadata_cd,
@@ -1037,6 +1038,7 @@ def test_plot_metadata(
     # Test that the file exists and isn't empty
     assert cont_pth.exists(), "Plot file not created"
     assert cont_pth.stat().st_size > 0, "Plot file is empty"
+
 
 def test_plot_metadata_modelfit(
         small_decomposition,
@@ -1214,8 +1216,8 @@ def test_rank_selection_k1(
     )
     stab_rank: Dict[str, int] = suggest_rank_stability(decomps)
     assert (
-        {'cophenetic_correlation', 'dispersion', 'signature_similarity'}
-        == set(stab_rank.keys())
+            {'cophenetic_correlation', 'dispersion', 'signature_similarity'}
+            == set(stab_rank.keys())
     )
     assert all(isinstance(x, int) for x in stab_rank.values())
 
@@ -1225,3 +1227,27 @@ def test_rank_selection_k1(
     coph: pd.Series = cophenetic_correlation(decomps)
     assert 1 not in disp.index
     assert 1 not in coph.index
+
+
+def test_plot_weight_distribution(
+        small_decomposition: Decomposition,
+        tmp_path: pathlib.Path
+):
+    matplotlib.pyplot.switch_backend("Agg")
+    plt = small_decomposition.plot_weight_distribution()
+    pth = (tmp_path / "test_rank_sel.png")
+    plt.save(pth)
+    # Test that the file exists and isn't empty
+    assert pth.exists(), "Plot file not created"
+    assert pth.stat().st_size > 0, "Plot file is empty"
+
+    # Test that both alternate scaling and thresholds do not error
+    plt = small_decomposition.plot_weight_distribution(
+        threshold=0.0001,
+        scale_transform=None
+    )
+    pth = (tmp_path / "test_rank_sel_threshold.png")
+    plt.save(pth)
+    # Test that the file exists and isn't empty
+    assert pth.exists(), "Plot file not created"
+    assert pth.stat().st_size > 0, "Plot file is empty"
