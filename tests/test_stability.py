@@ -14,7 +14,8 @@ from cvanmf.combine import combine_signatures, Cohort, Model, \
     Signature, Combiner, Cluster, split_dataframe_to_cohorts
 from cvanmf.data import synthetic_blocks
 from cvanmf.stability import compare_signatures, align_signatures, \
-    match_signatures, signature_stability, plot_signature_stability
+    match_signatures, signature_stability, plot_signature_stability, \
+    plot_across_ranks
 from cvanmf.denovo import NMFParameters, decompositions, Decomposition
 from cvanmf.models import Signatures
 
@@ -23,8 +24,8 @@ from cvanmf.models import Signatures
 def small_overlap_blocks(scope="session") -> pd.DataFrame:
     """Small overlapping block diagonal matrix with k=4, for use in testing
     de-novo methods."""
-    return synthetic_blocks(100, 100, 0.25, 3,
-                                              scale_lognormal_params=True).data
+    return synthetic_blocks(100, 100, 0.25, 4,
+                            scale_lognormal_params=True).data
 
 
 @pytest.fixture
@@ -35,11 +36,10 @@ def small_decompositions_random(
     """Get 'best' decompositions for a small dataset from random
     initialisations."""
     res = decompositions(
-        x=small_overlap_blocks,
-        random_starts=5,
-        ranks=[3, 4, 5],
-        top_n=5,
-        top_criteria="cosine_similarity",
+        x=cvanmf.data.example_abundance(),
+        random_starts=50,
+        ranks=[3, 4, 5, 6, 7],
+        top_n=1,
         progress_bar=False
     )
     return res
@@ -178,3 +178,13 @@ def test_plot_signature_stability(
     plt_stability.save(pth)
 
     assert pth.exists(), "Failed to save plot."
+
+
+def test_plot_across_ranks(small_decompositions_random):
+    plot_across_ranks(
+        small_decompositions_random,
+        cosine_threshold=0.90,
+        abundance_threshold=0.1,
+        reference=cvanmf.models.five_es().reapply(
+            cvanmf.data.example_abundance().iloc[:, :5])
+    )

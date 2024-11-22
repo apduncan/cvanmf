@@ -25,6 +25,7 @@ import logging
 
 from typing import Union, List, Iterable, Tuple, Optional, Dict, Any
 
+import networkx as nx
 import numpy as np
 import pandas as pd
 import plotnine
@@ -308,3 +309,135 @@ def plot_signature_stability(
     if geom_line is not None:
         plt = plt + plotnine.geom_line(**l_args)
     return plt
+
+def plot_across_ranks(
+        decomps: Dict[int, List[Decomposition]],
+        reference: Optional[Decomposition] = None,
+        cosine_threshold: float = 0.9,
+        abundance_threshold = 0.05
+) -> plotnine.ggplot:
+    """Show which signatures exist at different ranks."""
+    # Make a dictionary of decomps to use
+    use_decomps: Dict[int, List[Decomposition]] = {
+        k: [m[0]] for k, m in decomps.items()
+    }
+    if reference is not None:
+        use_decomps[reference.w.shape[1]] = [reference]
+        use_decomps = {
+            k: use_decomps[k] for k in sorted(use_decomps.keys())
+        }
+
+    # Start by fitting k to k+1
+    # Any with >threshold can be considered identical
+    # Then we can look for any which seem split
+    graph: nx.Graph = nx.DiGraph()
+    for k, m in use_decomps.items():
+        graph.add_nodes_from(((k, s) for s in m[0].names), layer=k)
+    for k, kp in __sliding_window(use_decomps.items(), 2):
+        model_k, model_kp = k[1][0], kp[1][0]
+        rank_k, rank_kp = k[0], kp[0]
+        graph.add_nodes_from(((rank_k, s) for s in model_k.names), layer=rank_k)
+
+        # 1:1 relationships
+        match: pd.DataFrame = match_signatures(model_k, model_kp)
+        # Create edges for any 1:1 assignments
+        matched: pd.DataFrame = match[match['pair_cosine'] >= cosine_threshold]
+        graph.add_edges_from(
+            (((rank_k, x[1]['a']), (rank_kp, x[1]['b']))
+            for x in matched.iterrows()),
+            weight=1.0
+        )
+
+        # Look for splits
+        fit: Decomposition = model_kp.reapply(model_k.w)
+        fit_split: pd.DataFrame = fit.model_fit[fit.model_fit > cosine_threshold]
+        # Determine which signatures are representative
+        fit_scale: pd.DataFrame = fit.scaled('h').loc[:, fit_split.index]
+        rep: pd.DataFrame = fit_scale > abundance_threshold
+        # Add edges if not among those with 1:1 relationships
+        rep_unmatched: pd.DataFrame = rep.drop(columns=matched['a'],
+                                               errors="ignore")
+        print(rep_unmatched)
+        print(matched)
+        print(rank_k)
+        for col in rep_unmatched.columns:
+            sigs_rep = rep_unmatched[col].loc[rep_unmatched[col]]
+            graph.add_edges_from(
+                ((
+                    (rank_k, col),
+                    (rank_kp, x),
+                    dict(weight=fit_scale.loc[x, col])
+                ) for x in sigs_rep.index)
+            )
+
+        # For now just plot, but we should look at degree 0 nodes later
+    import networkx
+    networkx.draw(
+        graph,
+        pos=networkx.multipartite_layout(graph, subset_key="layer"),
+        with_labels=True
+    )
+    from matplotlib import pyplot as plt
+    plt.savefig("/Users/hal/test.png")
+
+    vp = pd.DataFrame(
+        networkx.multipartite_layout(graph, subset_key="layer"),
+        index=['x', 'y']
+    ).T
+    ep = pd.DataFrame([
+        dict(
+            origin=x[0],
+            origin_rank=x[0][0],
+            origin_x=vp.loc[(x[0][0], x[0][1])]['x'],
+            origin_y=vp.loc[(x[0][0], x[0][1])]['y'],
+            dest=x[1],
+            dest_rank=x[1][0],
+            dest_x=vp.loc[(x[1][0], x[1][1])]['x'],
+            dest_y=vp.loc[(x[1][0], x[1][1])]['y'],
+            weight=graph.edges[x]['weight']
+        ) for x in graph.edges])
+
+    # Make plotnine plot
+    vp = vp.reset_index(names=['rank', 'signature'])
+    vp['color'] = vp.apply(
+        lambda x: use_decomps[x['rank']][0].colors[
+            use_decomps[x['rank']][0].names.index(x['signature'])
+        ],
+        axis=1
+    )
+    fig = (
+        plotnine.ggplot(
+            vp,
+            plotnine.aes(x='rank', y='y')
+        )
+        + plotnine.geom_segment(
+            data=ep,
+            mapping=plotnine.aes(
+                x="origin_rank",
+                y="origin_y",
+                xend="dest_rank",
+                yend="dest_y",
+                size="weight"
+            ),
+            alpha=0.6
+        )
+        + plotnine.geom_label(
+            plotnine.aes(label='signature'),
+            fill=vp['color']
+        )
+        + plotnine.scale_size_continuous(
+            range=(0.5, 3)
+        )
+    )
+    fig.save("/Users/hal/pntest.png")
+
+
+def __sliding_window(iterable, n):
+    "Collect data into overlapping fixed-length chunks or blocks."
+    # From itertools recipes
+    # sliding_window('ABCDEFG', 4) → ABCD BCDE CDEF DEFG
+    iterator = iter(iterable)
+    window = collections.deque(itertools.islice(iterator, n - 1), maxlen=n)
+    for x in iterator:
+        window.append(x)
+        yield tuple(window)
