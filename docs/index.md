@@ -6,7 +6,8 @@
 :hidden:
 
 install.md
-example.ipynb
+reapply.ipynb
+denovo.ipynb
 cell_example.ipynb
 nextflow.md
 autoapi/index
