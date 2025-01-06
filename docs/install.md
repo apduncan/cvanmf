@@ -6,10 +6,10 @@ Our current suggestion for installation is to use `mamba` to manage the python v
 as shown below.
 
 ## pip install
-First make a new environment with python 3.10 or higher
+First make a new environment with python 3.12 or higher
 
 ```commandline
-mamba create --name cvanmf 'python>=3.10' pip
+mamba create --name cvanmf 'python>=3.12' pip
 ```
 
 (If you use conda, substitute `mamba` for `conda` at the start). Once this has 

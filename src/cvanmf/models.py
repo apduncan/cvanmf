@@ -54,7 +54,10 @@ class Signatures(NamedTuple):
 def five_es() -> Signatures:
     """The 5 Enterosignature model of Frioux et al.
     (2023, https://doi.org/10.1016/j.chom.2023.05.024). A summary of this model
-    can also be found on the website https://enterosignatures.quadram.ac.uk
+    can also be found on the website https://enterosignatures.quadram.ac.uk.
+    The `reapply` method for this model will normalise (total-sum-scale) input
+    data after applying filters to match model format, so data provided does
+    not need to be normalised.
 
     :return: 5 Enterosignature model
     :type: Signatures
