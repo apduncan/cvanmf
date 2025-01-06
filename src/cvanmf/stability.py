@@ -377,8 +377,6 @@ def plot_across_ranks(
         pos=networkx.multipartite_layout(graph, subset_key="layer"),
         with_labels=True
     )
-    from matplotlib import pyplot as plt
-    plt.savefig("/Users/hal/test.png")
 
     vp = pd.DataFrame(
         networkx.multipartite_layout(graph, subset_key="layer"),
@@ -429,7 +427,7 @@ def plot_across_ranks(
             range=(0.5, 3)
         )
     )
-    fig.save("/Users/hal/pntest.png")
+    return fig
 
 
 def __sliding_window(iterable, n):
