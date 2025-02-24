@@ -29,6 +29,13 @@ A minimum of 2 samples is required.
 When number of samples $n$ is close to the number of signatures $k$, signatures are likely to represent individual 
 samples rather than broad patterns.
 
+## Container
+We provide a container image for linux/amd64 on through the Github Container Repository (GHCR), with the current
+version being `ghcr.io/apduncan/cvanmf:0.3.1/`.
+This is intended either for running cvanmf command-line tools, or using as a container for using cvanmf within 
+pipelines.
+Please see the documentation for more details.
+
 ## References
 If you use this tool please cite:
 For details on the method, please see:

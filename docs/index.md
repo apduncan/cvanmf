@@ -12,6 +12,7 @@ cell_example.ipynb
 nextflow.md
 autoapi/index
 click.rst
+docker.md
 changelog.md
 contributing.md
 conduct.md
