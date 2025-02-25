@@ -8,3 +8,8 @@ htmlcov
 test/
 *.pyc
 */.ipynb_checkpoints
+.nextflow.log*
+work
+sample.tsv
+.nextflow/*
+output/

@@ -31,7 +31,7 @@ samples rather than broad patterns.
 
 ## Container
 We provide a container image for linux/amd64 on through the Github Container Repository (GHCR), with the current
-version being `ghcr.io/apduncan/cvanmf:0.3.1/`.
+version being `ghcr.io/apduncan/cvanmf:latest/`.
 This is intended either for running cvanmf command-line tools, or using as a container for using cvanmf within 
 pipelines.
 Please see the documentation for more details.

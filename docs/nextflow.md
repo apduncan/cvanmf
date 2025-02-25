@@ -8,9 +8,7 @@ Introductions and more advanced training on Nextflow are available from
 [nextflow.io](https://training.nextflow.io/) and 
 [nf-co.re](https://nf-co.re/docs/usage/getting_started/introduction).
 
-The nextflow pipeline is maintained as a separate repository, 
-[apduncan/enteroflow](https://github.com/apduncan/enteroflow), but documented 
-here.
+The nextflow pipeline is part of this repository (apduncan/cvanmf).
 
 
 ## Outline
@@ -44,7 +42,19 @@ These are the main processes and a summary of their outputs.
 
 ## Requirements
 
-Required packages can be installed via `mamba`/`conda`, and are listed in 
+We suggest two ways to deal with package requirements: containers, or 
+conda/mamba/micromamba. Each of them is explained below. Our recommendation
+for reproducibility is to use containers if possible.
+
+### Containers (docker, singularity)
+A docker image with all pipeline requirements is [available from Github 
+Container Registry](https://github.com/apduncan/cvanmf/pkgs/container/cvanmf).
+The most recent version, with some additional packages
+needed by the pipeline, is `ghcr.io/apduncan/cvanmf:latest-nf`. Tags for
+specific versions are available in the form `ghcr.io/apduncan/cvanmf:0.3.1-nf`.
+
+### Micromamba (or conda, mamba)
+Required packages can be installed via `micromamba`/`conda`, and are listed in 
 `env.yaml`. However, you probably don't need to make an environment 
 manually: the pipelines configuration has a profile which will attempt to 
 automatically create a conda environment. This should work unless the 
@@ -54,11 +64,11 @@ environment you want to run in has no or limited internet access.
 
 Throughout examples here, we use an example input `sample.tsv`. You can use 
 your own data, or download some example data 
-[here](https://raw.githubusercontent.com/apduncan/enteroflow/main/resources/test_data.tsv) 
+[here](https://raw.githubusercontent.com/apduncan/cvanmf/main/resources/test_data.tsv) 
 or with the command below:
 
 ```
-curl https://raw.githubusercontent.com/apduncan/enteroflow/main/resources/test_data.tsv > sample.tsv
+curl https://raw.githubusercontent.com/apduncan/cvanmf/main/resources/test_data.tsv > sample.tsv
 ```
 
 ## Basic execution
@@ -68,13 +78,16 @@ a sample matrix `sample.tsv`. This runs only for ranks 2 and 3, and with
 only 3 iterations, as a quick running example.
 
 ```
-nextflow run apduncan/enteroflow -r main -profile conda \
+nextflow run apduncan/cvanmf -r main -profile conda \
 --matrix sample.tsv --ranks 2,3 --publish_dir output/sample --num_shuffles 3
 ```
 
 Parameter `-profile conda` selects the profile which will attempt to create 
-a conda environment with the required packages. Everything prefixed by `--` 
-is setting one of the parameters listed in the 
+a conda environment with the required packages. 
+If you have docker engine installed, you could instead use `-profile docker`
+which will run each job in a container with all dependencies.
+
+Everything prefixed by `--` is setting one of the parameters listed in the 
 [parameter list](#parameter-list). For how to provide values for 
 regularisation selection, please see 
 [customising configuration files](#customising-configuration-files) as these 
@@ -84,7 +97,7 @@ If the run fails, you can resume the previous run after fixing the issue by
 adding the `-resume` flag
 
 ```
-nextflow run apduncan/enteroflow -r main -profile conda -resume \
+nextflow run apduncan/cvanmf -r main -profile conda -resume \
 --matrix sample.tsv --ranks 2,3 --publish_dir output/sample --num_shuffles 3
 ```
 
@@ -115,7 +128,7 @@ values in the default configuration. Then, any command line parameters will
 be applied. Now we run
 
 ```
-nextflow run apduncan/enteroflow -r main -profile conda -c custom.config \
+nextflow run apduncan/cvanmf -r main -profile conda -c custom.config \
 -resume \
 --matrix sample.tsv --ranks 2,3 --publish_dir output/sample --seed 4298 \
 --num_shuffles 3
@@ -167,6 +180,13 @@ profiles {
                 memory = '8GB'
                 cpus = 2
             }
+            withName: "reguBiCv|rankBiCv" {
+              // The pipeline generates a lot of these jobs with identical
+              // requirements. It is better for the SLURM scheduler if these
+              // are submitted as a job array. Nextflow can handle that for
+              // us
+              array = 1000
+            }
         }
     }
 }
@@ -174,12 +194,12 @@ profiles {
 
 Replace the queue names with the queues specific to your HPC setup. To use 
 `conda`, remove `conda.useMicromamba`. To use `mamba`, replace 
-`conda.useMicromamba` with `conda.useMamba`
+`conda.useMicromamba` with `conda.useMamba`.
 
 The pipeline can now be run using
 
 ```
-nextflow run apduncan/enteroflow -r main -profile slurm -c custom.config \
+nextflow run apduncan/cvanmf -r main -profile slurm -c custom.config \
 -c slurm.config -resume \
 --matrix sample.tsv --ranks 2,3 --publish_dir output/sample --seed 4298 \
 --num_shuffles 3
@@ -187,6 +207,95 @@ nextflow run apduncan/enteroflow -r main -profile slurm -c custom.config \
 
 Note that we can provide multiple config files to Nextflow, and that the 
 slurm profile was selected using `-profile slurm`
+
+### Using containers with SLURM
+Rather than conda or equivalents, you can use containers to handle 
+requirements. We give some instructions for singularity (as this seems most
+common on HPC platforms) and docker, though other container engines are 
+supported by Nextflow. Below is a summary of configuring the pipeline to use 
+containers, for more detail please seethe 
+[Nextflow documentation](https://www.nextflow.io/docs/latest/container.html).
+
+Please note currently our containers are only built for amd64 architecture.
+If you need to use a different architecture, you will need to build the image
+from the Dockerfile in `docker/nf/`.
+
+#### singularity
+To use singularity, you can either provide details of the singularity image
+at the command line, or in the configuration file.
+
+At the command line
+```
+nextflow run apduncan/cvanmf \
+-with-singularity docker://ghcr.io/apduncan/cvanmf:latest-nf \
+-r main -profile slurm -c custom.config \
+-resume \
+--matrix sample.tsv --ranks 2,3 --publish_dir output/sample --seed 4298 \
+--num_shuffles 3
+```
+Nextflow can retrieve a docker image from a registry when given the 
+`docker://` prefix and convert this to a singularity image. The produced
+singularity image will be stored in a cache, which can be configured using
+the singularity.libraryDir configuration setting or the NXF_SINGULARITY_LIBRARYDIR 
+environmental variable
+([see docs](https://www.nextflow.io/docs/latest/container.html#singularity-docker-hub)),
+so the image will not be fetched every time.
+You could instead give the path to a singularity image, such as in the case
+where your computing environment has no internet access to pull the container.
+
+To avoid having to specify the container each time, you can instead add this to your 
+configuration profile:
+```
+profiles {
+    slurm {
+        (...)
+        singularity.enabled = true
+        process {
+            // Remove any conda related settings as well
+            container = 'docker://ghcr.io/apduncan/cvanmf:latest-nf'
+            // You could specify a path to a .sif image as well, if 
+            // you do not want Nextflow to try to pull and convert
+            // the image.
+            (...)
+            }
+        }
+    }
+}
+```
+
+#### docker
+To use docker, you can either provide details of the image at the command 
+line, or in the configuration file.
+
+At the command line
+```
+nextflow run apduncan/cvanmf \
+-with-docker ghcr.io/apduncan/cvanmf:latest-nf \
+-r main -profile slurm -c custom.config \
+-resume \
+--matrix sample.tsv --ranks 2,3 --publish_dir output/sample --seed 4298 \
+--num_shuffles 3
+```
+
+To avoid having to specify each time, you can instead add this to your configuration
+profile:
+```
+profiles {
+    slurm {
+        (...)
+        docker.enabled = true
+        process {
+            // Remove any conda related settings as well
+            container = 'ghcr.io/apduncan/cvanmf:latest-nf'
+            // You could specify a path to a .sif image as well, if 
+            // you do not want Nextflow to try to pull and convert
+            // the image.
+            (...)
+            }
+        }
+    }
+}
+```
 
 ### Limiting (or increasing) job submission
 
@@ -215,9 +324,6 @@ profiles {
 ... 
 ```
 
-In future versions of the pipeline I hope to introduce some batching of 
-these small tasks. 
-
 ### Memory estimation
 
 It's good practice to avoid requesting too much memory for each job. When 
@@ -231,11 +337,21 @@ produced and pick a sensible value. The amount of memory used for each
 iteration is pretty stable.
 
 ```
-nextflow run apduncan/enteroflow -r main -profile slurm -c custom.config \
+nextflow run apduncan/cvanmf -r main -profile slurm -c custom.config \
 -c slurm.config -resume -with-report report.html \
 --matrix sample.tsv --ranks 2,3 --num_shuffles 10 \
 --publish_dir output/sample_test --seed 4298
 ```
+
+### Array jobs
+Two processes, `rankBiCv` and `reguBiCv` generate a lot of jobs with
+identical requirements. Many schedulers handle these best as array jobs.
+The default configuration submits these as array jobs with 500 elements
+each. You can alter this using the `process.array` directive in 
+configuration. 
+
+For a `slurm` scheduler, you can find the maximum permitted number of jobs
+in an array using `scontrol show config | grep "MaxArraySize"`.
 
 ## Environments with limited internet access
 
@@ -244,11 +360,32 @@ such will not be able to fetch the pipeline or conda packages. It is still
 possible to run the pipeline in these environments, with some additional 
 setup.
 
+### Singularity
+You will first need to create a singularity image from the docker images.
+This will need to be done on a system with internet access to pull the
+image.
+
+```
+singularity pull image.sif docker://ghcr.io/apduncan/cvanmf:0.3.1-nf
+```
+
+You can now provide the path to `image.sif` via the command line 
+`-with-singularity` or in the `process.container` directive in your
+configuration. The file will need to be in a location accessible by
+all compute nodes.
+
+We also will need to pull the pipeline so it is available in the Nextflow cache.
+
+```
+nextflow pull apduncan/cvanmf
+```
+
+### Mamba (conda, micromamba)
 First step is to make a conda environment with the required packages. This 
 should be made in a directory accessible from all compute nodes.
 
 ```
-curl https://raw.githubusercontent.com/apduncan/enteroflow/main/env.yaml > env.yaml
+curl https://raw.githubusercontent.com/apduncan/cvanmf/main/env.yaml > env.yaml
 mamba env create -n cvapipe -f env.yaml
 ```
 
@@ -274,14 +411,14 @@ profiles {
 We also will need to pull the pipeline so it is available in the Nextflow cache.
 
 ```
-nextflow pull apduncan/enteroflow
+nextflow pull apduncan/cvanmf
 ```
 
 Now you can submit a job containing a command in the form shown below to run 
 the pipeline without needing any internet access.
 
 ```
-nextflow run apduncan/enteroflow -r main -c slurm.config -profile slurm \
+nextflow run apduncan/cvanmf -r main -c slurm.config -profile slurm \
 -resume \
 --matrix sample.tsv --ranks 2,10 --publish_dir output/sample --seed 4298
 ```
@@ -337,6 +474,10 @@ for that purpose.
 ### Rank selection
 * `ranks`: The lowest and highest rank to be searched, inclusive, as a comma 
   separated string. Defaults to "2,20".
+* `stability`: Calculate and report stability based rank selection criteria.
+  Default is `true`. Output will be an HTML report `stability_selection.html`
+  in the publish directory. This step can require a lot of memory for large
+  numbers of samples.
 
 ### Regularisation selection
 * `alpha`: Regularisation parameter values to search. Defaults to [0, 0.
