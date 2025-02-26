@@ -1,8 +1,6 @@
 name: Publish Docker images
 on:
   push:
-    branches:
-      - 'main'
     tags:
       - 'v*'
   workflow_dispatch:
@@ -13,7 +11,7 @@ env:
 
 jobs:
   build-and-push-base-image:
-    name: Push Docker image to GHCR
+    name: Push base Docker image to GHCR
     runs-on: ubuntu-latest
     permissions:
       packages: write
@@ -65,7 +63,7 @@ jobs:
 
   build-and-push-nf-image:
     needs: build-and-push-base-image
-    name: Push Docker image to GHCR
+    name: Push nf Docker image to GHCR
     runs-on: ubuntu-latest
     permissions:
       packages: write
