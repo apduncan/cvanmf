@@ -36,7 +36,9 @@ python-semantic-release = "^9.8.5"
 networkx = "^3.3"
 
 [tool.semantic_release]
-version_variable = "pyproject.toml:version" # version location
+version_toml = [
+    "pyproject.toml:tool.poetry.version"
+] # version location
 branch = "main"                             # branch to make releases of
 changelog_file = "CHANGELOG.md"             # changelog file
 build_command = "pip install poetry && poetry build"              # build dists
