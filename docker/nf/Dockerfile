@@ -6,3 +6,5 @@ LABEL org.opencontainers.image.source=https://github.com/apduncan/cvanmf
 # aren't need for a base installation
 
 RUN pip install jupyter papermill
+# ps needed by nextflow to produce runtime metrics etc
+RUN apt update && apt install -y procps && apt clean
