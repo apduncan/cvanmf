@@ -1,4 +1,6 @@
 # cvanmf
+[![ci-cd](https://github.com/apduncan/cvanmf/actions/workflows/ci-cd.yml/badge.svg?branch=main)](https://github.com/apduncan/cvanmf/actions/workflows/ci-cd.yml)
+
 An implementation of bicrossvalidation for Non-negative Matrix Factorisation (NMF) rank selection, along with methods
 for analysis and visualisation of NMF decomposition.
 
