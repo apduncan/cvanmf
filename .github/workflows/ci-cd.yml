@@ -1,6 +1,13 @@
 name: ci-cd
 
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    paths:
+      - "src/**"
+      - "test/**"
+      - "docs/**"
+  pull_request:
+  workflow_dispatch:
 
 jobs:
   ci:
@@ -66,6 +73,7 @@ jobs:
         password: ${{ secrets.TEST_PYPI_API_TOKEN }}
 
     - name: Test install from TestPyPI
+      if: steps.release.outputs.released == 'true'
       run: |
           pip install \
           --index-url https://test.pypi.org/simple/ \
