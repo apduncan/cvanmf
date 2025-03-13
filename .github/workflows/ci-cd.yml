@@ -44,7 +44,7 @@ jobs:
     needs: ci
 
     # Deployment only triggered on push/merge to main branch
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository_owner == 'apduncan'
 
     runs-on: ubuntu-latest
 
