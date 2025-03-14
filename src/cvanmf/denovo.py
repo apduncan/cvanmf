@@ -2007,7 +2007,7 @@ def _write_symlink(path: pathlib.Path,
               default="\t",
               help="""Delimiter to use for input and output tables. Defaults
               to tab.""")
-@click.option("-s",
+@click.option("-n",
               "--shuffles",
               required=False,
               type=int,
@@ -2130,7 +2130,7 @@ def cli_rank_selection(
     # Validate parameters
     # Rank min / max in right order
     rank_min, rank_max = min(rank_min, rank_max), max(rank_min, rank_max)
-    ranks: List[int] = list(range(rank_min, rank_max, rank_step))
+    ranks: List[int] = list(range(rank_min, rank_max+1, rank_step))
     if len(ranks) < 2:
         logger.fatal(("Must search 2 or more ranks; ranks provided were "
                        "%s"), str(ranks))

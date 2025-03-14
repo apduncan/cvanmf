@@ -769,6 +769,7 @@ def test_cli_rank_selection(
                                    "-o", td,
                                    "-d", "\t",
                                    "--shuffles", "5",
+                                   "-s", "1",
                                    "--no-progress",
                                    "--seed", "4928",
                                    "-l", "3",
@@ -782,6 +783,17 @@ def test_cli_rank_selection(
     for expected_file in ['rank_selection.tsv', 'rank_selection.pdf']:
         assert (td_path / expected_file).is_file(), \
             f"{expected_file} not created"
+    # Ensure results are produced for the expected ranks in the right amount
+    res_df: pd.DataFrame = pd.read_csv(
+        td_path / 'rank_selection.tsv',
+        sep = "\t"
+    )
+    expected_ranks: Set[int] = {3, 4, 5}
+    obs_ranks: Set[int] = {int(x) for x in res_df['rank']}
+    assert expected_ranks == obs_ranks, \
+        "Incorrect ranks searched"
+    assert (3 * 5) == res_df.shape[0], \
+        "Incorrect number of rank selection iterations"
 
 
 def test_cli_regu_selection(
