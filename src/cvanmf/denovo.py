@@ -4568,7 +4568,7 @@ class Decomposition:
                 )
 
                 if isinstance(plt_obj, plotnine.ggplot):
-                    plt_obj.save(plt_path.with_suffix(".pdf"))
+                    plt_obj.save(plt_path.with_suffix(".pdf"), verbose=False)
                 elif isinstance(plt_obj, marsilea.WhiteBoard):
                     plt_obj.save(plt_path.with_suffix(".pdf"))
                 else:
