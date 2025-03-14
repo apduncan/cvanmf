@@ -1191,7 +1191,7 @@ def plot_rank_selection(results: Dict[Union[int, float], List[BicvResult]],
     stacked: pd.DataFrame = (
         df
         .set_index(xaxis)
-        .stack(dropna=False)
+        .stack(future_stack=True)
         .to_frame(name='value')
         .reset_index(names=[xaxis, "measure"])
     )
@@ -1295,14 +1295,17 @@ def __add_stars(
 
     star_ypos: pd.DataFrame = (
             plt.data[['measure', 'value']]
-            .groupby(['measure'])
+            .groupby(['measure'], observed=True)
             .apply(lambda x: x.max() + (offset*(x.max()-x.min())))
         )
     # Using categorical x-axes so need to convert to index of value
     val_ordered: List = sorted(plt.data[x_lab].unique())
-    star_df['idx'] = star_df[x_lab].apply(
-        lambda x: (np.nan if x is None or np.isnan(x) else
-                   val_ordered.index(x) + 1))
+    star_df = star_df.assign(
+        idx = star_df[x_lab].apply(
+            lambda x: (np.nan if x is None or np.isnan(x) else
+                        val_ordered.index(x) + 1)
+        )
+    )
     plt_df: pd.DataFrame = star_df.merge(
         star_ypos,
         left_on='measure',
@@ -1916,7 +1919,7 @@ def plot_stability_rank_selection(
         raise ValueError(f"No valid measures in {include}")
     df: pd.DataFrame = (
         pd.concat(series, axis=1)
-        .stack()
+        .stack(future_stack=True)
         .to_frame('value')
         .reset_index(names=['rank', 'measure'])
     )
@@ -3828,11 +3831,11 @@ class Decomposition:
                 plotnine.geom_point(**(DEF_PCOA_POINT_AES | point_aes)) +
                 plotnine.xlab(
                     f'{axes_str[0]} ('
-                    f'{pcoa_res.proportion_explained[axes[0]]:.2%})'
+                    f'{pcoa_res.proportion_explained.iloc[axes[0]]:.2%})'
                 ) +
                 plotnine.ylab(
                     f'{axes_str[1]} ('
-                    f'{pcoa_res.proportion_explained[axes[1]]:.2%})')
+                    f'{pcoa_res.proportion_explained.iloc[axes[1]]:.2%})')
         )
         plt = Decomposition.__set_guide_name(
             plt, guide="color", option=color, compare_to="signature",
@@ -3889,7 +3892,7 @@ class Decomposition:
             label_fn = lambda x: x
         feat_weight: pd.DataFrame = (
             self.scaled('w')
-            .stack()
+            .stack(future_stack=True)
             .reset_index()
             .set_axis(['feature', 'signature', 'rel_weight'], axis="columns")
         )
@@ -3981,7 +3984,7 @@ class Decomposition:
                 nand,
                 columns=ph.columns,
                 index=ph.index
-            ).stack().dropna()
+            ).stack(future_stack=True).dropna()
             ph_sig: pd.DataFrame = ph_stack.loc[ph_stack <= alpha]
             # Format significant pairs into a string
             sig_pairs: str = ";".join(ph_sig.reset_index().apply(
@@ -4112,11 +4115,11 @@ class Decomposition:
         h: pd.DataFrame = measure_df
         md_subset = (
             md_subset
-            .stack()
+            .stack(future_stack=True)
             .reset_index()
             .set_axis(['sample', 'metadata_field', 'metadata_value'], axis=1)
         ).merge(
-            h.stack().reset_index().set_axis(
+            h.stack(future_stack=True).reset_index().set_axis(
                 ['sample', 'signature', 'signature_weight'], axis=1
             ),
             right_on="sample",
@@ -4309,7 +4312,7 @@ class Decomposition:
         # Recover metadata in format we need
         df: pd.DataFrame = plt_metadata.data.pivot_table(
             columns="metadata_field", index="sample",
-            values="metadata_value", aggfunc=np.min
+            values="metadata_value", aggfunc="min"
         )
 
         univar_res: pd.DataFrame = self.univariate_tests(
@@ -4323,12 +4326,12 @@ class Decomposition:
         xpos: pd.DataFrame = (df.nunique() / 2) + 0.5
         y_max: pd.DataFrame = (
             plt_metadata.data[['signature', 'signature_weight']]
-            .groupby("signature")
+            .groupby("signature", observed=False)
             .max()
         )
         y_min: pd.DataFrame = (
             plt_metadata.data[['signature', 'signature_weight']]
-            .groupby("signature")
+            .groupby("signature", observed=False)
             .min()
         )
         y_range: pd.DataFrame = y_max - y_min
@@ -4430,7 +4433,7 @@ class Decomposition:
             return x
 
         weight_df: pd.DataFrame = self.scaled('w').apply(
-            lambda x: apply_sort(x)).stack().reset_index()
+            lambda x: apply_sort(x)).stack(future_stack=True).reset_index()
         weight_df.columns = ['order', 'signature', 'weight']
         weight_df = weight_df.loc[weight_df['weight'] > threshold]
 
@@ -5209,7 +5212,7 @@ def _is_series_discrete(series: pd.Series) -> bool:
     if isinstance(series.dtype, pd.CategoricalDtype):
         return True
     if series.dtype == object:
-        if isinstance(series[0], str):
+        if isinstance(series.iloc[0], str):
             return True
         unique_vals: Set = set(series)
         return len(unique_vals) > (0.75 * len(series[~series.isna()]))
