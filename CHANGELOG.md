@@ -1,6 +1,31 @@
 # CHANGELOG
 
 
+## v0.5.1 (2025-04-10)
+
+### Bug Fixes
+
+- **nextflow**: Correct withName in slurm
+  ([`f8149ca`](https://github.com/apduncan/cvanmf/commit/f8149ca2695d9ec9012750ec3137f257092b1343))
+
+Corrected the syntax for setting the array size in the withName selector for the slurm profile. Had
+  incorrectly used a colon, which caused errors when attempting to use the slurm profile.
+
+### Chores
+
+- Build and push images on version tag
+  ([`afdb47b`](https://github.com/apduncan/cvanmf/commit/afdb47b418236f05c20576f7c5ffd937a9a164ae))
+
+Added a github action to build and deploy Docker images to GHCR when a new version tag (i.e. v0.6.0)
+  is pushed.
+
+- Update actions triggers
+  ([`f81196d`](https://github.com/apduncan/cvanmf/commit/f81196d6f2946d079cad8a198b0e2d3c15fcb9ae))
+
+Update to only trigger image build on version tag push. Update ci-cd to only trigger on updates to
+  src/, test/, docs/.
+
+
 ## v0.5.0 (2025-02-26)
 
 ### Chores
