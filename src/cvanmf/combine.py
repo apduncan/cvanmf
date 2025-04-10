@@ -457,7 +457,7 @@ class Cluster:
             index=sig_df.columns,
             columns=sig_df.columns
         )
-        sig_cs = sig_cs.stack().reset_index()
+        sig_cs = sig_cs.stack(future_stack=True).reset_index()
         sig_cs.columns = ['a', 'b', 'cosine_similarity']
         sig_cs['cohort_a'] = sig_cs['a'].apply(
             lambda x: self.signatures[x].model.cohort.name
@@ -533,7 +533,7 @@ class Cluster:
         feature_df = feature_df.iloc[:min(top_n, feature_df.shape[0]), :]
         feature_df_stack: pd.DataFrame = (
             feature_df
-            .stack()
+            .stack(future_stack=True)
             .reset_index()
         )
         feature_df_stack.columns = ['feature', 'signature', 'weight']
@@ -731,7 +731,7 @@ class Combiner:
         ).fillna(0)
         cluster_prop: pd.DataFrame = (
             (cluster_df.T / pd.Series(max_support))
-            .stack().stack()
+            .stack(future_stack=True).stack(future_stack=True)
             .reset_index()
             .set_axis(['cluster_idx', 'rank', 'cohort', 'prop'], axis=1)
         )
