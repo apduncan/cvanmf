@@ -10,6 +10,17 @@ For details on the method, please see:
 ## Documentation
 Documentation can be found at [readthedocs](https://cvanmf.readthedocs.io).
 
+## Installation
+cvanmf is available from bioconda
+
+```
+conda install --name {envname} -c bioconda -c conda-forge cvanmf
+```
+or pip
+```
+pip install cvanmf
+```
+
 ## Overview
 NMF is an unsupervised machine learning techniques which provides a representation of a numeric input matrix $X$ as 
 a mixture of $k$ of underlying parts. 
