@@ -4070,7 +4070,9 @@ class Decomposition:
             sample cosine similarity, or ``both`` (default). You can also
             provide any arbitrary matrix with the correct dimensions, for
             instance if you had done some custom processing of the :math:`H`
-            matrix, or wanted to use absolute :math:`H` weights.
+            matrix, or wanted to use absolute :math:`H` weights. An arbitrary
+            matrix should not contain any NA values; any columns with NAs will
+            have NA for all statistical test results.
         :param drop_na: Remove any samples with ``NA`` values from metadata
             before testing. This is done on a per test basis, so one ``NA`` will
             not cause a sample to be removed for all tests.
