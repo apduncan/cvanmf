@@ -1,4 +1,6 @@
 # cvanmf
+[![ci-cd](https://github.com/apduncan/cvanmf/actions/workflows/ci-cd.yml/badge.svg?branch=main)](https://github.com/apduncan/cvanmf/actions/workflows/ci-cd.yml)
+
 An implementation of bicrossvalidation for Non-negative Matrix Factorisation (NMF) rank selection, along with methods
 for analysis and visualisation of NMF decomposition.
 
@@ -7,6 +9,17 @@ For details on the method, please see:
 
 ## Documentation
 Documentation can be found at [readthedocs](https://cvanmf.readthedocs.io).
+
+## Installation
+cvanmf is available from bioconda
+
+```
+conda install --name {envname} -c bioconda -c conda-forge cvanmf
+```
+or pip
+```
+pip install cvanmf
+```
 
 ## Overview
 NMF is an unsupervised machine learning techniques which provides a representation of a numeric input matrix $X$ as 

@@ -1,6 +1,13 @@
 name: ci-cd
 
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    paths:
+      - "src/**"
+      - "test/**"
+      - "docs/**"
+  pull_request:
+  workflow_dispatch:
 
 jobs:
   ci:
@@ -28,3 +35,59 @@ jobs:
 
     - name: Build documentation
       run: poetry run make html --directory docs/
+
+  cd:
+    permissions:
+      id-token: write
+      contents: write
+
+    needs: ci
+
+    # Deployment only triggered on push/merge to main branch
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository_owner == 'apduncan'
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v2
+      with:
+        python-version: 3.12
+
+    - name: Check-out repository
+      uses: actions/checkout@v2
+      with:
+        fetch-depth: 0
+
+    - name: Use Python Semantic Release to prepare release
+      id: release
+      uses: python-semantic-release/python-semantic-release@v8.3.0
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Publish to TestPyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      if: steps.release.outputs.released == 'true'
+      with:
+        repository-url: https://test.pypi.org/legacy/
+        password: ${{ secrets.TEST_PYPI_API_TOKEN }}
+
+    - name: Test install from TestPyPI
+      if: steps.release.outputs.released == 'true'
+      run: |
+          pip install \
+          --index-url https://test.pypi.org/simple/ \
+          --extra-index-url https://pypi.org/simple \
+          cvanmf
+
+    - name: Publish to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      if: steps.release.outputs.released == 'true'
+      with:
+        password: ${{ secrets.PYPI_API_TOKEN }}
+
+    - name: Publish package distributions to GitHub Releases
+      uses: python-semantic-release/upload-to-gh-release@main
+      if: steps.release.outputs.released == 'true'
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
