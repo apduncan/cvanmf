@@ -1,3 +1,4 @@
+![cvaNMF logo](img/cvanmf_logo.png "cvaNMF logo")
 # cvanmf
 [![ci-cd](https://github.com/apduncan/cvanmf/actions/workflows/ci-cd.yml/badge.svg?branch=main)](https://github.com/apduncan/cvanmf/actions/workflows/ci-cd.yml)
 
@@ -6,6 +7,12 @@ for analysis and visualisation of NMF decomposition.
 
 For details on the method, please see:
 * Enterosignatures define common bacterial guilds in the human gut microbiome, Frioux, Clémence et al., Cell Host & Microbe, Volume 31, Issue 7, 1111 - 1125.e6 (https://doi.org/10.1016/j.chom.2023.05.024)
+
+## Graphical Abstract
+[![cvaNMF asbtract](img/graphical_abstract.png "cvaNMF abstract")](./img/graphical_abstract_full.png)
+
+The left section is a schematic depicting the procedures implemented in cvaNMF; on the right is a summary of results
+reported in the manuscript (in preparation).
 
 ## Documentation
 Documentation can be found at [readthedocs](https://cvanmf.readthedocs.io).
@@ -54,7 +61,6 @@ If you use this tool please cite:
 For details on the method, please see:
 * Enterosignatures define common bacterial guilds in the human gut microbiome, Frioux, Clémence et al., Cell Host & Microbe, Volume 31, Issue 7, 1111 - 1125.e6 (https://doi.org/10.1016/j.chom.2023.05.024)
 
-For background on NMF, see:
 For background on  NMF see:
 * Lee & Seung, 1999 (https://doi.org/10.1038/44565) for the paper introducing NMF
 * Jiang et al, 2012 (https://doi.org/10.1007/s00285-011-0428-2) for a good description of the method and application to metagenomic data 
