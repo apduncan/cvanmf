@@ -61,6 +61,7 @@ Please see the documentation for more details.
 ## References
 If you use this tool please cite:
 For details on the method, please see:
+* Detecting signatures underlying the composition of biological data, Duncan et al., Nucleic Acids Research 53, 2025 (https://doi.org/10.1093/nar/gkaf1388)
 * Enterosignatures define common bacterial guilds in the human gut microbiome, Frioux, Clémence et al., Cell Host & Microbe, Volume 31, Issue 7, 1111 - 1125.e6 (https://doi.org/10.1016/j.chom.2023.05.024)
 
 For background on  NMF see:
