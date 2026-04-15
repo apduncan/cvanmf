@@ -6,6 +6,8 @@ An implementation of bicrossvalidation for Non-negative Matrix Factorisation (NM
 for analysis and visualisation of NMF decomposition.
 
 For details on the method, please see:
+* Detecting signatures underlying the composition of biological data, Duncan et al., Nucleic Acids Research 53, 2025 (https://doi.org/10.1093/nar/gkaf1388)
+
 * Enterosignatures define common bacterial guilds in the human gut microbiome, Frioux, Clémence et al., Cell Host & Microbe, Volume 31, Issue 7, 1111 - 1125.e6 (https://doi.org/10.1016/j.chom.2023.05.024)
 
 ## Graphical Abstract
