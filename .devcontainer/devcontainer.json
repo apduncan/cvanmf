@@ -4,6 +4,9 @@
         "dockerfile": "Dockerfile",
         "context": "."
     },
+    "features": {
+        "ghcr.io/devcontainers/features/github-cli:1": {}
+    },
     // Fixed path so Claude Code session history (keyed on project path)
     // is found again after a rebuild.
     "workspaceFolder": "/workspaces/cvanmf",
