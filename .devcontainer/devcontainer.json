@@ -18,7 +18,9 @@
     ],
     "containerEnv": {
         // Keeps .claude.json (auth/onboarding) inside the persisted folder too
-        "CLAUDE_CONFIG_DIR": "/home/vscode/.claude"
+        "CLAUDE_CONFIG_DIR": "/home/vscode/.claude",
+        // Keeps gh auth in the persisted folder so it survives rebuilds
+        "GH_CONFIG_DIR": "/home/vscode/.claude/gh"
     },
     "remoteUser": "vscode",
     "postCreateCommand": "poetry config virtualenvs.in-project true && poetry install",
