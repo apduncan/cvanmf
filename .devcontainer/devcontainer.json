@@ -1,0 +1,39 @@
+{
+    "name": "cvanmf",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": "."
+    },
+    "features": {
+        "ghcr.io/devcontainers/features/github-cli:1": {}
+    },
+    // Fixed path so Claude Code session history (keyed on project path)
+    // is found again after a rebuild.
+    "workspaceFolder": "/workspaces/cvanmf",
+    "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/cvanmf,type=bind",
+    // Claude Code state is persisted in a gitignored folder in the repo.
+    "initializeCommand": "mkdir -p .devcontainer/.claude-state",
+    "mounts": [
+        "source=${localWorkspaceFolder}/.devcontainer/.claude-state,target=/home/vscode/.claude,type=bind"
+    ],
+    "containerEnv": {
+        // Keeps .claude.json (auth/onboarding) inside the persisted folder too
+        "CLAUDE_CONFIG_DIR": "/home/vscode/.claude",
+        // Keeps gh auth in the persisted folder so it survives rebuilds
+        "GH_CONFIG_DIR": "/home/vscode/.claude/gh"
+    },
+    "remoteUser": "vscode",
+    "postCreateCommand": "poetry config virtualenvs.in-project true && poetry install",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python",
+                "ms-toolsai.jupyter",
+                "anthropic.claude-code"
+            ],
+            "settings": {
+                "python.defaultInterpreterPath": "${containerWorkspaceFolder}/.venv/bin/python"
+            }
+        }
+    }
+}

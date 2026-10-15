@@ -13,3 +13,5 @@ work
 sample.tsv
 .nextflow/*
 output/
+.devcontainer/.claude-state/
+.venv/
